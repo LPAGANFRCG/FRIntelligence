@@ -32,18 +32,26 @@ export const MessageItem: React.FC<MessageItemProps> = ({
 
   /**
    * Parser que procesa:
-   * 1. Tokens interactivos del protocolo AEC: [[HL-1]] o [[HL-1: A-7.22 Nota 5]]
-   * 2. Formato markdown estándar: [Texto](cite-id)
+   * 1. Filtro estricto para que NUNCA se filtre JSON en la pantalla
+   * 2. Tokens interactivos del protocolo AEC: [[HL-1]] o [[HL-1: A-7.22 Nota 5]]
+   * 3. Formato markdown estándar: [Texto](cite-id)
    */
   const renderFormattedContent = (content: string) => {
+    // Filtro de frontend: Elimina bloques JSON de highlights y cualquier residuo técnico
+    const cleanContent = content
+      .replace(/```json:highlights[\s\S]*?```/gi, '')
+      .replace(/```json[\s\S]*?```/gi, '')
+      .replace(/\{[\s\r\n]*"viewer_navigation"[\s\S]*?\}/gi, '')
+      .trim();
+
     const combinedRegex = /(\[\[(HL-\d+)(?::\s*([^\]]+))?\]\]|\[([^\]]+)\]\((cite-[a-zA-Z0-9-]+|HL-\d+)\))/g;
     const parts = [];
     let lastIndex = 0;
     let match;
 
-    while ((match = combinedRegex.exec(content)) !== null) {
+    while ((match = combinedRegex.exec(cleanContent)) !== null) {
       if (match.index > lastIndex) {
-        parts.push(content.substring(lastIndex, match.index));
+        parts.push(cleanContent.substring(lastIndex, match.index));
       }
 
       let highlightId = '';
@@ -96,8 +104,8 @@ export const MessageItem: React.FC<MessageItemProps> = ({
       lastIndex = match.index + match[0].length;
     }
 
-    if (lastIndex < content.length) {
-      parts.push(content.substring(lastIndex));
+    if (lastIndex < cleanContent.length) {
+      parts.push(cleanContent.substring(lastIndex));
     }
 
     return (

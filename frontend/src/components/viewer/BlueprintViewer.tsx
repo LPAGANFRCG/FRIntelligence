@@ -49,7 +49,11 @@ export const BlueprintViewer: React.FC<BlueprintViewerProps> = ({
   // Transform (Zoom, Pan, Rotation)
   const [scale, setScale] = useState<number>(1.2);
   const [pan, setPan] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
-  const [rotation, setRotation] = useState<number>(0);
+  const [rotation, setRotation] = useState<number>(() => {
+    if (typeof selectedCitation?.force_rotation === 'number') return selectedCitation.force_rotation;
+    if (typeof selectedCitation?.rotation === 'number') return selectedCitation.rotation;
+    return 90; // Default a horizontal landscape para planos arquitectónicos de obra
+  });
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const [dragStart, setDragStart] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
@@ -231,37 +235,57 @@ export const BlueprintViewer: React.FC<BlueprintViewerProps> = ({
             .toLowerCase()
             .replace(/[^a-z0-9áéíóúñ\s]/gi, ' ')
             .trim();
-          const quoteWords = cleanQuote.split(/\s+/).filter((w) => w.length > 1);
+          const quoteWords = cleanQuote.split(/\s+/).filter((w) => w.length > 2);
 
-          if (quoteWords.length >= 2) {
+          if (quoteWords.length >= 1) {
             let bestCluster: any[] = [];
-            const keyStart = quoteWords[0];
-            const keyNext = quoteWords.length > 1 ? quoteWords[1] : '';
+            let bestScore = 0;
 
-            // Look for a tight sequence of consecutive items (window of 1-6 items) matching the quote
             for (let i = 0; i < items.length; i++) {
               const itemStr = (items[i].str || '').toLowerCase();
               if (!itemStr.trim()) continue;
 
-              // Does this item contain the starting words?
-              if (itemStr.includes(keyStart) || (keyNext && itemStr.includes(keyNext))) {
-                const candidateItems: any[] = [];
-                let windowText = '';
-                for (let j = i; j < Math.min(items.length, i + 8); j++) {
-                  candidateItems.push(items[j]);
-                  windowText += ' ' + (items[j].str || '').toLowerCase();
+              if (!quoteWords.some((w) => itemStr.includes(w))) continue;
 
-                  const matchCount = quoteWords.filter((w) => windowText.includes(w)).length;
-                  if (matchCount >= Math.min(3, quoteWords.length) || (matchCount / quoteWords.length >= 0.6)) {
-                    bestCluster = candidateItems;
-                    break;
+              const baseTx = items[i].transform?.[4] ?? 0;
+              const baseTy = items[i].transform?.[5] ?? 0;
+              const candidateItems: any[] = [items[i]];
+              let windowText = itemStr;
+
+              // Expandir a ítems contiguos en la misma celda/fila (dentro de 35 unidades de tx y 650 de ty)
+              for (let j = i + 1; j < Math.min(items.length, i + 8); j++) {
+                const itNext = items[j];
+                if (!itNext?.transform) continue;
+                const dTx = Math.abs(itNext.transform[4] - baseTx);
+                const dTy = Math.abs(itNext.transform[5] - baseTy);
+
+                if (dTx < 35 && dTy < 650) {
+                  candidateItems.push(itNext);
+                  windowText += ' ' + (itNext.str || '').toLowerCase();
+                }
+              }
+
+              let score = 0;
+              for (const w of quoteWords) {
+                if (windowText.includes(w)) score += 1;
+              }
+
+              if (score > bestScore) {
+                bestScore = score;
+                bestCluster = [...candidateItems];
+
+                // Incluir identificador previo si es número de ítem o círculo de referencia en la misma línea
+                if (i > 0 && items[i - 1]?.transform) {
+                  const prevTx = items[i - 1].transform[4];
+                  const prevTy = items[i - 1].transform[5];
+                  if (Math.abs(prevTx - baseTx) < 20 && Math.abs(prevTy - baseTy) < 160) {
+                    bestCluster.unshift(items[i - 1]);
                   }
                 }
-                if (bestCluster.length > 0) break;
               }
             }
 
-            if (bestCluster.length > 0) {
+            if (bestCluster.length > 0 && bestScore >= Math.min(2, quoteWords.length)) {
               let minX = Infinity;
               let minY = Infinity;
               let maxX = -Infinity;
@@ -269,31 +293,39 @@ export const BlueprintViewer: React.FC<BlueprintViewerProps> = ({
 
               for (const it of bestCluster) {
                 if (!it.transform) continue;
-                const [scaleX, skewY, skewX, scaleY, tx, ty] = it.transform;
-                const h = it.height || Math.abs(scaleY) || 14;
+                const [a, b, c, d, e, f] = it.transform;
+                const scaleX = Math.hypot(a, b) || 1;
+                const scaleY = Math.hypot(c, d) || 1;
+                const ux = a / scaleX;
+                const uy = b / scaleX;
+                const vx = c / scaleY;
+                const vy = d / scaleY;
                 const w = it.width || (it.str?.length ? it.str.length * 8 : 40);
+                const h = it.height || scaleY || 14;
 
-                const p1 = viewport.convertToViewportPoint(tx, ty);
-                const p2 = viewport.convertToViewportPoint(tx + w, ty);
-                const p3 = viewport.convertToViewportPoint(tx, ty + h);
-                const p4 = viewport.convertToViewportPoint(tx + w, ty + h);
+                const corners = [
+                  [e, f],
+                  [e + ux * w, f + uy * w],
+                  [e + vx * h, f + vy * h],
+                  [e + ux * w + vx * h, f + uy * w + vy * h],
+                ];
 
-                const xs = [p1[0], p2[0], p3[0], p4[0]];
-                const ys = [p1[1], p2[1], p3[1], p4[1]];
-
-                minX = Math.min(minX, ...xs);
-                minY = Math.min(minY, ...ys);
-                maxX = Math.max(maxX, ...xs);
-                maxY = Math.max(maxY, ...ys);
+                const pts = corners.map(([px, py]) => viewport.convertToViewportPoint(px, py));
+                for (const p of pts) {
+                  minX = Math.min(minX, p[0]);
+                  minY = Math.min(minY, p[1]);
+                  maxX = Math.max(maxX, p[0]);
+                  maxY = Math.max(maxY, p[1]);
+                }
               }
 
               if (minX < Infinity && maxX > -Infinity && maxX > minX && maxY > minY) {
-                const padX = 12;
-                const padY = 8;
+                const padX = 14;
+                const padY = 6;
                 return {
                   x: Math.max(0, minX - padX),
                   y: Math.max(0, minY - padY),
-                  width: Math.max(30, (maxX - minX) + (padX * 2)),
+                  width: Math.max(40, (maxX - minX) + (padX * 2)),
                   height: Math.max(18, (maxY - minY) + (padY * 2)),
                   isTextSnapped: true,
                 };
