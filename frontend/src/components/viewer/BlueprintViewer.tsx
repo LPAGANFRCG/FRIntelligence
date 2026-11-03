@@ -85,7 +85,27 @@ export const BlueprintViewer: React.FC<BlueprintViewerProps> = ({
         if (!isCancelled) {
           setPdfDoc(doc);
           setTotalPages(doc.numPages);
-          setCurrentPage(selectedCitation?.page_number || 1);
+          const targetPg = selectedCitation?.page_number || 1;
+          setCurrentPage(targetPg);
+
+          // Detect initial rotation: from citation or from native PDF page rotate
+          const firstPage = await doc.getPage(targetPg);
+          const nativeRotate = firstPage.rotate || 0;
+          let initialRot = nativeRotate;
+          if (typeof selectedCitation?.force_rotation === 'number') {
+            initialRot = selectedCitation.force_rotation;
+          } else if (typeof selectedCitation?.recommended_rotation === 'number') {
+            initialRot = selectedCitation.recommended_rotation;
+          } else if (typeof selectedCitation?.rotation === 'number') {
+            initialRot = selectedCitation.rotation;
+          } else if (nativeRotate === 0) {
+            // Auto-detect: if page is portrait (height > width) on an architectural drawing, default to landscape 90°
+            const unrotated = firstPage.getViewport({ scale: 1.0, rotation: 0 });
+            if (unrotated.height > unrotated.width) {
+              initialRot = 90;
+            }
+          }
+          setRotation(initialRot);
           setLoading(false);
         }
       } catch (err: any) {
@@ -207,56 +227,74 @@ export const BlueprintViewer: React.FC<BlueprintViewerProps> = ({
           const textContent = await page.getTextContent();
           const items = (textContent.items || []) as any[];
 
-          const searchWords = exactQuote
+          const cleanQuote = exactQuote
             .toLowerCase()
             .replace(/[^a-z0-9áéíóúñ\s]/gi, ' ')
-            .split(/\s+/)
-            .filter((w) => w.length > 2);
+            .trim();
+          const quoteWords = cleanQuote.split(/\s+/).filter((w) => w.length > 1);
 
-          if (searchWords.length > 0) {
-            const matchedItems: any[] = [];
-            const fullPage = items.map((it) => (it.str || '').toLowerCase()).join(' ');
-            const primaryKeywords = searchWords.slice(0, 5);
-            const matchesPrimary = primaryKeywords.some((w) => fullPage.includes(w));
+          if (quoteWords.length >= 2) {
+            let bestCluster: any[] = [];
+            const keyStart = quoteWords[0];
+            const keyNext = quoteWords.length > 1 ? quoteWords[1] : '';
 
-            if (matchesPrimary) {
-              for (const it of items) {
-                const str = (it.str || '').toLowerCase();
-                if (searchWords.some((w) => str.includes(w))) {
-                  matchedItems.push(it);
+            // Look for a tight sequence of consecutive items (window of 1-6 items) matching the quote
+            for (let i = 0; i < items.length; i++) {
+              const itemStr = (items[i].str || '').toLowerCase();
+              if (!itemStr.trim()) continue;
+
+              // Does this item contain the starting words?
+              if (itemStr.includes(keyStart) || (keyNext && itemStr.includes(keyNext))) {
+                const candidateItems: any[] = [];
+                let windowText = '';
+                for (let j = i; j < Math.min(items.length, i + 8); j++) {
+                  candidateItems.push(items[j]);
+                  windowText += ' ' + (items[j].str || '').toLowerCase();
+
+                  const matchCount = quoteWords.filter((w) => windowText.includes(w)).length;
+                  if (matchCount >= Math.min(3, quoteWords.length) || (matchCount / quoteWords.length >= 0.6)) {
+                    bestCluster = candidateItems;
+                    break;
+                  }
                 }
+                if (bestCluster.length > 0) break;
               }
             }
 
-            if (matchedItems.length > 0) {
+            if (bestCluster.length > 0) {
               let minX = Infinity;
               let minY = Infinity;
               let maxX = -Infinity;
               let maxY = -Infinity;
 
-              for (const it of matchedItems) {
+              for (const it of bestCluster) {
                 if (!it.transform) continue;
                 const [scaleX, skewY, skewX, scaleY, tx, ty] = it.transform;
-                const h = it.height || Math.abs(scaleY) || 12;
-                const w = it.width || (it.str?.length ? it.str.length * 7 : 20);
+                const h = it.height || Math.abs(scaleY) || 14;
+                const w = it.width || (it.str?.length ? it.str.length * 8 : 40);
 
-                const pt1 = viewport.convertToViewportPoint(tx, ty);
-                const pt2 = viewport.convertToViewportPoint(tx + w, ty + h);
+                const p1 = viewport.convertToViewportPoint(tx, ty);
+                const p2 = viewport.convertToViewportPoint(tx + w, ty);
+                const p3 = viewport.convertToViewportPoint(tx, ty + h);
+                const p4 = viewport.convertToViewportPoint(tx + w, ty + h);
 
-                minX = Math.min(minX, pt1[0], pt2[0]);
-                minY = Math.min(minY, pt1[1], pt2[1]);
-                maxX = Math.max(maxX, pt1[0], pt2[0]);
-                maxY = Math.max(maxY, pt1[1], pt2[1]);
+                const xs = [p1[0], p2[0], p3[0], p4[0]];
+                const ys = [p1[1], p2[1], p3[1], p4[1]];
+
+                minX = Math.min(minX, ...xs);
+                minY = Math.min(minY, ...ys);
+                maxX = Math.max(maxX, ...xs);
+                maxY = Math.max(maxY, ...ys);
               }
 
               if (minX < Infinity && maxX > -Infinity && maxX > minX && maxY > minY) {
-                const padX = 6;
-                const padY = 4;
+                const padX = 12;
+                const padY = 8;
                 return {
                   x: Math.max(0, minX - padX),
                   y: Math.max(0, minY - padY),
-                  width: Math.max(20, (maxX - minX) + (padX * 2)),
-                  height: Math.max(14, (maxY - minY) + (padY * 2)),
+                  width: Math.max(30, (maxX - minX) + (padX * 2)),
+                  height: Math.max(18, (maxY - minY) + (padY * 2)),
                   isTextSnapped: true,
                 };
               }
@@ -315,11 +353,24 @@ export const BlueprintViewer: React.FC<BlueprintViewerProps> = ({
         }
 
         // Apply recommended rotation if specified (0, 90, 180, 270)
-        const targetRotation = typeof selectedCitation.force_rotation === 'number'
-          ? selectedCitation.force_rotation
-          : (typeof selectedCitation.recommended_rotation === 'number'
-            ? selectedCitation.recommended_rotation
-            : (typeof selectedCitation.rotation === 'number' ? selectedCitation.rotation : rotation));
+        let targetRotation = rotation;
+        if (typeof selectedCitation.force_rotation === 'number') {
+          targetRotation = selectedCitation.force_rotation;
+        } else if (typeof selectedCitation.recommended_rotation === 'number') {
+          targetRotation = selectedCitation.recommended_rotation;
+        } else if (typeof selectedCitation.rotation === 'number') {
+          targetRotation = selectedCitation.rotation;
+        } else {
+          const pageObj = await pdfDoc.getPage(targetPage);
+          if (pageObj.rotate) {
+            targetRotation = pageObj.rotate;
+          } else {
+            const unrot = pageObj.getViewport({ scale: 1.0, rotation: 0 });
+            if (unrot.height > unrot.width) {
+              targetRotation = 90;
+            }
+          }
+        }
 
         if (targetRotation !== rotation) {
           setRotation(targetRotation);
