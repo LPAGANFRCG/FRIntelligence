@@ -14,6 +14,8 @@ export interface HighlightItem {
   id: string; // e.g. "HL-1"
   sheet_number?: string; // e.g. "A-7.23"
   target_document?: string; // e.g. "Attachment D - SARPS Recommendations"
+  target_file?: string;
+  target_page?: number;
   sheet_title?: string;
   revision_status?: 'CURRENT' | 'SUPERSEDED' | string;
   label: string; // e.g. "SARPS Rec. 7: Countertops & Casework"
@@ -23,7 +25,9 @@ export interface HighlightItem {
   referenced_text_snippet?: string;
   page_number?: number;
   rotation_applied?: number; // 0, 90, 180, 270
+  force_rotation?: number;
   auto_zoom?: number; // e.g. 100, 120, 140, 200
+  recommended_zoom?: number;
   style?: {
     color?: string;
     border_style?: string;
@@ -33,12 +37,16 @@ export interface HighlightItem {
   gcs_uri?: string;
 }
 
-export interface DocumentNavigationMeta {
+export interface ViewerNavigationMeta {
+  target_document?: string;
   filename?: string;
   target_page?: number;
-  recommended_rotation?: number; // 0, 90, 180, 270
+  force_rotation?: number; // 0, 90, 180, 270
+  recommended_rotation?: number;
   recommended_zoom?: number; // percentage e.g. 100, 120, 140, 200
 }
+
+export interface DocumentNavigationMeta extends ViewerNavigationMeta {}
 
 export interface CitationSource {
   id: string;
@@ -51,12 +59,14 @@ export interface CitationSource {
   is_current_ifc: boolean;
   superseded_by?: string;
   page_number: number;
+  target_page?: number;
   total_pages: number;
   file_url: string;
   gcs_uri: string;
   bounding_box: BoundingBox; // converted to normalized [left%, top%, width%, height%]
   box_2d?: [number, number, number, number]; // original [ymin, xmin, ymax, xmax] (0-1000 scale)
   rotation?: number; // 0, 90, 180, 270
+  force_rotation?: number;
   recommended_rotation?: number;
   auto_zoom?: number; // percentage e.g. 100, 120, 140
   recommended_zoom?: number;

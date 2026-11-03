@@ -315,9 +315,11 @@ export const BlueprintViewer: React.FC<BlueprintViewerProps> = ({
         }
 
         // Apply recommended rotation if specified (0, 90, 180, 270)
-        const targetRotation = typeof selectedCitation.recommended_rotation === 'number'
-          ? selectedCitation.recommended_rotation
-          : (typeof selectedCitation.rotation === 'number' ? selectedCitation.rotation : rotation);
+        const targetRotation = typeof selectedCitation.force_rotation === 'number'
+          ? selectedCitation.force_rotation
+          : (typeof selectedCitation.recommended_rotation === 'number'
+            ? selectedCitation.recommended_rotation
+            : (typeof selectedCitation.rotation === 'number' ? selectedCitation.rotation : rotation));
 
         if (targetRotation !== rotation) {
           setRotation(targetRotation);

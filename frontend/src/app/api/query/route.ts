@@ -9,56 +9,52 @@ const auth = new GoogleAuth({
   scopes: ['https://www.googleapis.com/auth/cloud-platform'],
 });
 
-const AEC_AUDITOR_SYSTEM_PROMPT = `Actúa como Auditor Técnico AEC y Motor de Anotación Espacial para Especificaciones y Planos de Hospitales.
+const AEC_AUDITOR_SYSTEM_PROMPT = `Actúa como un Auditor Técnico AEC y Motor de Anotación Espacial para Planos y Especificaciones de Construcción.
 
-REGLAS CRÍTICAS DE PÁGINA Y HIGHLIGHTS:
+Tu objetivo es responder consultas técnicas con rigor de ingeniería y emitir obligatoriamente la metadata necesaria para controlar la navegación, rotación y resaltados (highlights) en el visor de documentos.
 
-1. Prohibido apuntar a la Portada / Página 1 (Page Target Estricto):
-   - En libros de especificaciones o anexos multipágina (ej. Attachment B Technical Specifications de 829 páginas, Attachment D SARPS, Addendum No. 3), las cláusulas técnicas NUNCA están en la portada (página 1).
-   - Extrae obligatoriamente el número de página real ("target_page" / "page_number") dentro del documento PDF donde reside la cláusula citada (ej. si la sección de puertas contra fuego o dampers está en la página 127 o 342, reporta 127 o 342).
-   - Extrae el número de página real del chunk recuperado por el corpus RAG.
+REGLAS OBLIGATORIAS:
 
-2. Ajuste Estricto del Bounding Box (Tight Fit - No cajas vacías):
-   - Cada caja "box_2d" debe abarcar ÚNICA y EXCLUSIVAMENTE el párrafo, tabla, nota o detalle que contiene la prueba directa de lo que afirmas.
-   - Prohibido incluir márgenes en blanco, párrafos adyacentes o títulos no relacionados.
-   - Si no estás 100% seguro de la posición geométrica exacta [ymin, xmin, ymax, xmax] en esa página, NO inventes coordenadas genéricas al centro.
-   - Provee siempre "exact_quoted_text" con la frase o párrafo exacto citado para que el cliente pueda hacer snap visual con PDF.js al texto real renderizado.
-   - Las coordenadas normalizadas van de 0 a 1000: [ymin, xmin, ymax, xmax] donde (0,0) es la esquina superior izquierda de la página y (1000,1000) la inferior derecha.
+1. Control de Navegación y Páginas (CERO PORTADAS):
+   - Nunca dirijas al usuario a la página 1 a menos que la información resida literalmente en la carátula.
+   - Extrae el número de página real (1-based index) donde se encuentra la cláusula, nota o tabla en el documento.
 
-3. Orientación y Zoom Recomendado:
-   - "recommended_rotation": 0, 90, 180, o 270 según la orientación nativa de lectura.
-   - "auto_zoom": porcentaje de zoom sugerido (ej. 120, 140, 200) para enfocar y centrar la nota legiblemente.
+2. Corrección de Orientación (Rotation Auto-Detection):
+   - Inspecciona la orientación del plano o tabla citada.
+   - Si el plano viene en orientación vertical pero el texto, membrete, cajetín o tabla de acabados corre de lado (90° o 270°), debes asignar obligatoriamente el ángulo de corrección: 90, 180 o 270.
+   - No envíes rotación 0 si el plano no es legible directamente en horizontal.
 
-4. Sincronización Interactiva en el Texto:
-   - Cada afirmación o partida analizada debe concluir con el badge del highlight correspondiente: [[HL-#]] para que el frontend vincule el click/hover al viewport del visor.
+3. Delimitación Estricta de Highlights (Bounding Boxes):
+   - Prohibido resaltar la página completa o usar cajas genéricas estilo [0, 0, 1000, 1000].
+   - Cada caja "box_2d" [ymin, xmin, ymax, xmax] (escala normalizada de 0 a 1000) debe ajustarse exactamente al párrafo, nota o renglón específico que valida tu respuesta.
+   - Provee siempre "exact_quoted_text" con la frase inicial y final del fragmento para permitir sincronización exacta de texto en el visor.
 
-FORMATO OBLIGATORIO DE RESPUESTA:
+4. Formato de Salida Obligatorio:
+   Estructura siempre tu respuesta en dos bloques delimitados:
 
-### REPORTE TÉCNICO
-[Presenta tu análisis técnico clasificado por División CSI, requerimientos de especificación, impacto en el estimado y alertas de revisión, insertando los badges [[HL-1]], [[HL-2]], etc.]
+   ### INFORME TÉCNICO
+   [Presenta tu análisis técnico clasificado por División CSI, referencias normativas (ASTM, ACI, PRBC), notas de constructibilidad o RFI, incluyendo los badges interactivos [[HL-1]], [[HL-2]], etc.]
 
-\`\`\`json:highlights
-{
-  "document": {
-    "filename": "Attachment B Technical Specifications.pdf",
-    "target_page": 127,
-    "recommended_rotation": 0,
-    "recommended_zoom": 130
-  },
-  "highlights": [
-    {
-      "id": "HL-1",
-      "target_file": "Attachment B Technical Specifications.pdf",
-      "target_page": 127,
-      "label": "Requerimientos de Puertas y Fuego",
-      "exact_quoted_text": "Door assemblies subject to smoke compartmentation and fire-resistance...",
-      "box_2d": [320, 150, 480, 850],
-      "rotation_applied": 0,
-      "auto_zoom": 130
-    }
-  ]
-}
-\`\`\``;
+   \`\`\`json:highlights
+   {
+     "viewer_navigation": {
+       "target_document": "Nombre_Del_Archivo.pdf",
+       "target_page": 5,
+       "force_rotation": 90,
+       "recommended_zoom": 120
+     },
+     "highlights": [
+       {
+         "id": "HL-1",
+         "target_page": 5,
+         "label": "Especificaciones de Acabados Exteriores",
+         "box_2d": [180, 45, 820, 410],
+         "exact_quoted_text": "SCHEDULE OF FINISHES... Smooth Cement Plaster Finish...",
+         "color": "#F59E0B"
+       }
+     ]
+   }
+   \`\`\``;
 
 function parseSheetInfo(sourceUri: string) {
   const filename = sourceUri.split('/').pop() || 'Document.pdf';
@@ -205,7 +201,8 @@ export async function POST(req: NextRequest) {
     if (jsonMatch) {
       try {
         const parsed = JSON.parse(jsonMatch[1]);
-        documentMeta = parsed.document || null;
+        // Support both "viewer_navigation" (new schema) and "document" (legacy)
+        documentMeta = parsed.viewer_navigation || parsed.document || null;
         extractedHighlights = parsed.highlights || [];
         // Remover el bloque JSON de la respuesta visible para que el chat quede limpio
         informeTecnico = fullGeneratedText.replace(jsonMatch[0], '').trim();
@@ -229,41 +226,55 @@ export async function POST(req: NextRequest) {
           sheet_title: info.sheetTitle,
           revision_status: info.isCurrent ? 'CURRENT' : 'SUPERSEDED REV 0',
           label: `${info.sheetName} (Nota ${idx + 1})`,
-          color: info.isCurrent ? '#FFB800' : '#FF3B30',
+          color: info.isCurrent ? '#F59E0B' : '#FF3B30',
           box_2d: [ymin, xmin, ymax, xmax],
           referenced_text_snippet: (ctx.text || '').substring(0, 300),
           gcs_uri: ctx.sourceUri,
           page_number: 1,
           target_page: 1,
+          force_rotation: 0,
           rotation_applied: 0,
-          auto_zoom: 120,
+          recommended_zoom: 120,
         };
       });
     }
 
     // 5. Vincular cada highlight a la URL de streaming del PDF real
     const citations = extractedHighlights.map((hl: any, idx: number) => {
-      const targetDoc = (hl.target_file || hl.target_document || documentMeta?.filename || hl.sheet_number || '').trim();
+      const targetDoc = (
+        hl.target_document || 
+        hl.target_file || 
+        documentMeta?.target_document || 
+        documentMeta?.filename || 
+        hl.sheet_number || 
+        ''
+      ).trim();
       const exactSnippet = hl.exact_quoted_text || hl.referenced_text_snippet || '';
-      const color = hl.style?.color || hl.color || '#F5A623';
+      const color = hl.color || hl.style?.color || '#F59E0B';
       const pageNumber = typeof hl.target_page === 'number'
         ? hl.target_page
         : (typeof hl.page_number === 'number' 
           ? hl.page_number 
           : (typeof documentMeta?.target_page === 'number' ? documentMeta.target_page : 1));
 
-      const rotation = typeof hl.rotation_applied === 'number'
-        ? hl.rotation_applied
-        : (typeof documentMeta?.recommended_rotation === 'number' ? documentMeta.recommended_rotation : 0);
+      const rotation = typeof hl.force_rotation === 'number'
+        ? hl.force_rotation
+        : (typeof hl.rotation_applied === 'number'
+          ? hl.rotation_applied
+          : (typeof documentMeta?.force_rotation === 'number'
+            ? documentMeta.force_rotation
+            : (typeof documentMeta?.recommended_rotation === 'number' ? documentMeta.recommended_rotation : 0)));
 
-      const autoZoom = typeof hl.auto_zoom === 'number'
-        ? hl.auto_zoom
-        : (typeof documentMeta?.recommended_zoom === 'number' ? documentMeta.recommended_zoom : 130);
+      const autoZoom = typeof hl.recommended_zoom === 'number'
+        ? hl.recommended_zoom
+        : (typeof hl.auto_zoom === 'number'
+          ? hl.auto_zoom
+          : (typeof documentMeta?.recommended_zoom === 'number' ? documentMeta.recommended_zoom : 120));
 
       // Encontrar URI de GCS coincidente
       let gcsUri = '';
 
-      // Direct document heuristics for known key documents
+      // Heurísticas directas para documentos clave del proyecto
       const lowerDoc = targetDoc.toLowerCase();
       if (lowerDoc.includes('sarps') || lowerDoc.includes('attachment d')) {
         gcsUri = 'gs://frcg-projects/2026-12-01  Hospital Trauma/Bid Set w. add #02/Specifications/RFP/Attachment/Attachment D SARPS Recommendations.pdf';
@@ -304,8 +315,10 @@ export async function POST(req: NextRequest) {
         revision_date: '2026-10-29',
         is_current_ifc: !hl.revision_status?.toUpperCase().includes('SUPERSEDED'),
         page_number: pageNumber,
+        target_page: pageNumber,
         total_pages: 1,
         rotation: rotation,
+        force_rotation: rotation,
         recommended_rotation: rotation,
         auto_zoom: autoZoom,
         recommended_zoom: autoZoom,
@@ -323,13 +336,14 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       answer: informeTecnico,
+      viewer_navigation: documentMeta,
       document: documentMeta,
       highlights: extractedHighlights,
       citations: citations,
       suggested_followups: [
         'Comprobar compatibilidad con marcos de acero y divisiones CSI 08',
-        'Revisar cerraduras con certificación ANSI/BHMA y cilindros maestros',
-        'Generar RFI formal para aprobación de submittal de cerrajería',
+        'Revisar especificaciones técnicas y requisitos de prueba ASTM',
+        'Generar RFI formal para aclaración técnica con el proyectista',
       ],
     });
   } catch (error: any) {
