@@ -29,12 +29,14 @@ interface MessageItemProps {
 }
 
 interface MarkdownBlock {
-  type: 'heading' | 'numbered' | 'bullet' | 'blockquote' | 'paragraph' | 'hr';
+  type: 'heading' | 'numbered' | 'bullet' | 'blockquote' | 'paragraph' | 'hr' | 'table';
   level?: number;
   title?: string;
   num?: string;
   text?: string;
   lines?: string[];
+  tableHeaders?: string[];
+  tableRows?: string[][];
 }
 
 export const MessageItem: React.FC<MessageItemProps> = ({
@@ -369,19 +371,62 @@ export const MessageItem: React.FC<MessageItemProps> = ({
         continue;
       }
 
-      // Separador horizontal --- o ***
-      if (line === '---' || line === '***' || line === '___') {
+      // Separador horizontal --- o *** o ___
+      if (/^[-*_]{3,}$/.test(line)) {
         flushParagraph();
         blocks.push({ type: 'hr' });
         continue;
       }
 
-      // Encabezados ### o ## o #
-      if (line.startsWith('### ') || line.startsWith('## ') || line.startsWith('# ')) {
+      // Tablas Markdown (| Col 1 | Col 2 |)
+      if (line.startsWith('|') && line.endsWith('|')) {
         flushParagraph();
-        const level = line.startsWith('### ') ? 3 : line.startsWith('## ') ? 2 : 1;
-        const title = line.replace(/^#{1,3}\s+/, '').replace(/\*{1,3}/g, '').trim();
+        const tableLines = [line];
+        while (i + 1 < lines.length && lines[i + 1].trim().startsWith('|') && lines[i + 1].trim().endsWith('|')) {
+          i++;
+          tableLines.push(lines[i].trim());
+        }
+
+        if (tableLines.length >= 2) {
+          const splitRow = (r: string) =>
+            r
+              .split('|')
+              .slice(1, -1)
+              .map((c) => c.trim());
+
+          const headerRow = splitRow(tableLines[0]);
+          let rowStartIndex = 1;
+
+          // Si la siguiente fila es el divisor |---|---|
+          if (tableLines.length > 1 && /^\|[\s\-\:\.\*\|]+\|$/.test(tableLines[1])) {
+            rowStartIndex = 2;
+          }
+
+          const bodyRows = tableLines.slice(rowStartIndex).map(splitRow);
+          blocks.push({
+            type: 'table',
+            tableHeaders: headerRow,
+            tableRows: bodyRows,
+          });
+          continue;
+        }
+      }
+
+      // Encabezados con regex (#, ##, ###, ####, etc.)
+      const headingMatch = line.match(/^(#{1,6})\s+(.*)$/);
+      if (headingMatch) {
+        flushParagraph();
+        const level = headingMatch[1].length;
+        const title = headingMatch[2].replace(/\*{1,3}/g, '').trim();
         blocks.push({ type: 'heading', level, title });
+        continue;
+      }
+
+      // Título en negrita standalone (**Título:** o **Título**)
+      const boldTitleMatch = line.match(/^\*\*([^*]+)\*\*[:\s]*$/);
+      if (boldTitleMatch && !line.includes('[[')) {
+        flushParagraph();
+        blocks.push({ type: 'heading', level: 3, title: boldTitleMatch[1].trim() });
         continue;
       }
 
@@ -401,16 +446,16 @@ export const MessageItem: React.FC<MessageItemProps> = ({
         continue;
       }
 
-      // Lista numerada: 1. **Title:** text
-      const numMatch = line.match(/^(\d+)\.\s+(.*)$/);
+      // Lista numerada: 1. **Title:** text o 1) text
+      const numMatch = line.match(/^(\d+)[\.\)]\s+(.*)$/);
       if (numMatch) {
         flushParagraph();
         blocks.push({ type: 'numbered', num: numMatch[1], text: numMatch[2] });
         continue;
       }
 
-      // Viñetas: * text o - text
-      const bulletMatch = line.match(/^[\*\-]\s+(.*)$/);
+      // Viñetas: * text o - text o • text
+      const bulletMatch = line.match(/^[\*\-•]\s+(.*)$/);
       if (bulletMatch) {
         flushParagraph();
         blocks.push({ type: 'bullet', text: bulletMatch[1] });
@@ -530,6 +575,41 @@ export const MessageItem: React.FC<MessageItemProps> = ({
 
           if (block.type === 'hr') {
             return <hr key={`hr-${idx}`} className="border-t border-[#232938] my-3" />;
+          }
+
+          if (block.type === 'table' && block.tableHeaders && block.tableRows) {
+            return (
+              <div
+                key={`tbl-${idx}`}
+                className="my-3 overflow-x-auto rounded-lg border border-[#232938] bg-[#0e111a] shadow-sm"
+              >
+                <table className="min-w-full divide-y divide-[#232938] text-xs">
+                  <thead className="bg-[#151926]">
+                    <tr>
+                      {block.tableHeaders.map((th, thIdx) => (
+                        <th
+                          key={`th-${thIdx}`}
+                          className="px-3 py-2 text-left font-bold text-amber-300 uppercase tracking-wider text-[11px]"
+                        >
+                          {renderInlineContent(th)}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[#1e2330]">
+                    {block.tableRows.map((row, rIdx) => (
+                      <tr key={`tr-${rIdx}`} className="hover:bg-[#151a28]/60 transition-colors">
+                        {row.map((cell, cIdx) => (
+                          <td key={`td-${cIdx}`} className="px-3 py-2 text-zinc-200">
+                            {renderInlineContent(cell)}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            );
           }
 
           if (block.type === 'paragraph' && block.text) {

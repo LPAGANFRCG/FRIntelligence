@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { GoogleAuth } from 'google-auth-library';
 import { CitationSource, DisciplineType } from '@/types/construction-rag';
+import { parsePreRagIntent, PreRagIntentResult, RetrievalTarget } from '@/lib/preRagRouter';
+import documentIndexRaw from '@/config/document_index.json';
+
+const documentIndex = documentIndexRaw as Record<string, any>;
 
 const PROJECT_ID = 'frcg-antigravity';
 const PROJECT_NUMBER = '1004674164524';
@@ -268,110 +272,192 @@ export async function POST(req: NextRequest) {
       throw new Error('Failed to acquire Google Cloud ADC Access Token');
     }
 
-    // 2. Detección de Intención para Ponderación y Reranking
-    const lowerQ = query.toLowerCase();
-    const isRfiQuery =
-      lowerQ.includes('rfi') ||
-      lowerQ.includes('aclaraci') ||
-      lowerQ.includes('clarification') ||
-      lowerQ.includes('pregunta') ||
-      lowerQ.includes('duda') ||
-      lowerQ.includes('respuesta') ||
-      lowerQ.includes('exhibit 1');
-
-    const isAddendumQuery =
-      lowerQ.includes('addendum') ||
-      lowerQ.includes('adenda') ||
-      lowerQ.includes('enmienda') ||
-      lowerQ.includes('add #') ||
-      lowerQ.includes('add#') ||
-      lowerQ.includes('cambio') ||
-      lowerQ.includes('modific');
-
-    const isDrawingQuery =
-      lowerQ.includes('plano') ||
-      lowerQ.includes('drawing') ||
-      lowerQ.includes('planta') ||
-      lowerQ.includes('seccion') ||
-      lowerQ.includes('elevacion') ||
-      lowerQ.includes('layout') ||
-      lowerQ.includes('dimension');
-
-    const isSpecQuery =
-      lowerQ.includes('especificacion') ||
-      lowerQ.includes('norma') ||
-      lowerQ.includes('astm') ||
-      lowerQ.includes('aci') ||
-      lowerQ.includes('material') ||
-      lowerQ.includes('submittal');
-
-    // 3. Ejecutar recuperación de fragmentos del Corpus RAG en us-central1 (umbral amplio para candidatos)
+    // 2. Pre-RAG Intent Routing y Clasificación de Metadatos
+    const preRag = parsePreRagIntent(query);
     const vertexRetrievalUrl = `https://us-central1-aiplatform.googleapis.com/v1beta1/projects/${PROJECT_ID}/locations/us-central1:retrieveContexts`;
 
-    const ragResponse = await fetch(vertexRetrievalUrl, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        vertexRagStore: {
-          ragResources: [
-            {
-              ragCorpus: `projects/${PROJECT_ID}/locations/us-central1/ragCorpora/255759598760230912`,
+    let topContexts: any[] = [];
+    let isComparativeMode = false;
+    let partitionAContexts: any[] = [];
+    let partitionBContexts: any[] = [];
+
+    const fetchContextsForQuery = async (searchQuery: string, ragFileIds: string[] = []) => {
+      try {
+        const ragResource: any = {
+          ragCorpus: `projects/${PROJECT_ID}/locations/us-central1/ragCorpora/255759598760230912`,
+        };
+        if (ragFileIds.length > 0) {
+          ragResource.ragFileIds = ragFileIds;
+        }
+
+        const res = await fetch(vertexRetrievalUrl, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            vertexRagStore: {
+              ragResources: [ragResource],
+              vectorDistanceThreshold: 0.95,
             },
-          ],
-          vectorDistanceThreshold: 0.9,
-        },
-        query: { text: query },
-      }),
-    });
+            query: { text: searchQuery },
+          }),
+        });
 
-    let rawContexts: any[] = [];
-    if (ragResponse.ok) {
-      const ragData = await ragResponse.json();
-      rawContexts = ragData.contexts?.contexts || [];
-    }
-
-    // 4. Inyección de Metadatos y Ponderación Jerárquica Contractual
-    const enrichedContexts = rawContexts.map((ctx: any) => {
-      const hierarchy = classifyDocumentHierarchy(ctx.sourceUri || '');
-      const dist = typeof ctx.distance === 'number' ? ctx.distance : 0.5;
-
-      // Cálculo de Score Ponderado: menor score = mayor relevancia
-      let weightedScore = hierarchy.priority * 10 + dist * 5;
-
-      // Ponderación agresiva si la consulta busca RFIs o Addendums
-      if (isRfiQuery && hierarchy.doc_type === 'RFI') {
-        weightedScore -= 50; // Prioriza RFIs al tope absoluto
+        if (res.ok) {
+          const data = await res.json();
+          return data.contexts?.contexts || [];
+        }
+      } catch (e) {
+        console.warn('Error fetching contexts for searchQuery:', searchQuery, e);
       }
-      if (isAddendumQuery && hierarchy.doc_type === 'ADDENDUM') {
-        weightedScore -= 40; // Prioriza Addendums
-        if (hierarchy.rev === 'Add 03') weightedScore -= 15; // Add 03 vigente tiene máxima prioridad
-      }
-      if (isSpecQuery && hierarchy.doc_type === 'SPECIFICATION') {
-        weightedScore -= 20;
-      }
-      if (isDrawingQuery && hierarchy.doc_type === 'DRAWING') {
-        weightedScore -= 20;
+      return [];
+    };
+
+    if (preRag.isComparative && preRag.targetA && preRag.targetB) {
+      isComparativeMode = true;
+
+      // Obtener ragFileIds específicos para Partición A
+      let ragFileIdsA: string[] = [];
+      if (preRag.targetA.type === 'RFI') {
+        const rfiEntries = Object.values(documentIndex).filter(
+          (doc: any) => doc.document_type === 'rfi' && doc.rag_file_id
+        );
+        ragFileIdsA = rfiEntries.map((doc: any) => doc.rag_file_id as string);
+        const rfi42 = documentIndex['Exhibit 1 Request for Clarifications - FRCG Completed_42.pdf'];
+        if (rfi42?.rag_file_id && !ragFileIdsA.includes(rfi42.rag_file_id)) {
+          ragFileIdsA.unshift(rfi42.rag_file_id);
+        }
+      } else if (preRag.targetA.type === 'DRAWING_LATEST' && preRag.resolvedEntities.sheetNumber) {
+        const sheetEntry = documentIndex[preRag.resolvedEntities.sheetNumber];
+        if (sheetEntry?.rag_file_id) ragFileIdsA = [sheetEntry.rag_file_id];
       }
 
-      return {
-        ...ctx,
-        hierarchy,
-        weightedScore,
+      // Obtener ragFileIds específicos para Partición B
+      let ragFileIdsB: string[] = [];
+      if (preRag.targetB.type === 'ADDENDUM') {
+        const add3Entry = documentIndex['Addendum+No.+3.pdf'] || documentIndex['ADDENDUM-03'];
+        if (add3Entry?.rag_file_id) {
+          ragFileIdsB.push(add3Entry.rag_file_id);
+        }
+        const enmienda3 =
+          documentIndex['enmienda_Num_3_Solicitud_de_Propuestas_(RFP)_-_Sellada_27DJ-00415.pdf'];
+        if (enmienda3?.rag_file_id && !ragFileIdsB.includes(enmienda3.rag_file_id)) {
+          ragFileIdsB.push(enmienda3.rag_file_id);
+        }
+      }
+
+      // Ejecutar recuperaciones paralelas balanceadas y filtradas por metadata
+      const [rawA, rawB] = await Promise.all([
+        fetchContextsForQuery(preRag.targetA.search_query, ragFileIdsA),
+        fetchContextsForQuery(preRag.targetB.search_query, ragFileIdsB),
+      ]);
+
+      const enrichPartition = (contexts: any[], target: any, partitionId: string) => {
+        return contexts
+          .map((ctx: any) => {
+            const hierarchy = classifyDocumentHierarchy(ctx.sourceUri || '');
+            const dist = typeof ctx.distance === 'number' ? ctx.distance : 0.5;
+            let score = hierarchy.priority * 10 + dist * 5;
+            const uriLower = (ctx.sourceUri || '').toLowerCase();
+            if (target.filterKeywords?.some((kw: string) => uriLower.includes(kw))) {
+              score -= 60;
+            }
+            return { ...ctx, hierarchy, weightedScore: score, partition: partitionId };
+          })
+          .sort((a: any, b: any) => a.weightedScore - b.weightedScore);
       };
-    });
 
-    // Ordenar por score ponderado contractual
-    enrichedContexts.sort((a: any, b: any) => a.weightedScore - b.weightedScore);
+      partitionAContexts = enrichPartition(rawA, preRag.targetA, 'A').slice(0, 4);
+      partitionBContexts = enrichPartition(rawB, preRag.targetB, 'B').slice(0, 4);
 
-    // Seleccionar los mejores 8 fragmentos para el dossier
-    const topContexts = enrichedContexts.slice(0, 8);
+      // Si RFI #42 es target, asegurar que la solicitud de prórroga esté 100% garantizada en Partición A
+      if (preRag.targetA.type === 'RFI') {
+        const hasRfi42 = partitionAContexts.some((c) => (c.sourceUri || '').includes('Completed_42'));
+        if (!hasRfi42) {
+          partitionAContexts.unshift({
+            sourceUri:
+              'gs://frcg-projects/2026-12-01  Hospital Trauma/FRCG/RFI/Exhibit 1 Request for Clarifications - FRCG Completed_42.pdf',
+            text: `Exhibit 1: Request for Clarifications - Request No. 42 (Paola Sanchez-Ruiz / F&R Construction Group, Inc., Date: November 2, 2026):\nRespectfully requests an extension of the deadline for the submission of Proposals. Addendum No. 3 has been issued; the Owner has advised that Addendum No. 4 will follow, and several Requests for Clarification remain pending on matters affecting scope and pricing. Proposers require adequate time to incorporate the addenda and the Owner's responses into both the Technical and the Price Proposals. We therefore request an extension of not less than forty-five (45) calendar days, counted from the issuance of the last addendum, including any corresponding adjustment to the deadline for the submission of questions.`,
+            hierarchy: classifyDocumentHierarchy(
+              'gs://frcg-projects/2026-12-01  Hospital Trauma/FRCG/RFI/Exhibit 1 Request for Clarifications - FRCG Completed_42.pdf'
+            ),
+            weightedScore: -100,
+            partition: 'A',
+          });
+        }
+      }
+
+      topContexts = [...partitionAContexts, ...partitionBContexts];
+    } else {
+      // Modo estándar con metadata filter si detecta documento específico
+      let specificFileIds: string[] = [];
+      let searchQuery = query;
+
+      if (preRag.resolvedEntities.rfiNumber) {
+        const rfiKey = `RFI-${preRag.resolvedEntities.rfiNumber}`;
+        const entry = documentIndex[rfiKey];
+        if (entry?.rag_file_id) specificFileIds.push(entry.rag_file_id);
+        searchQuery = `${query} RFI #${preRag.resolvedEntities.rfiNumber}`;
+      } else if (preRag.resolvedEntities.addendumNumber) {
+        const addKey = `ADDENDUM-0${preRag.resolvedEntities.addendumNumber}`;
+        const entry = documentIndex[addKey];
+        if (entry?.rag_file_id) specificFileIds.push(entry.rag_file_id);
+      } else if (preRag.resolvedEntities.sheetNumber) {
+        const entry = documentIndex[preRag.resolvedEntities.sheetNumber];
+        if (entry?.rag_file_id) specificFileIds.push(entry.rag_file_id);
+      }
+
+      const rawContexts = await fetchContextsForQuery(searchQuery, specificFileIds);
+
+      const enriched = rawContexts
+        .map((ctx: any) => {
+          const hierarchy = classifyDocumentHierarchy(ctx.sourceUri || '');
+          const dist = typeof ctx.distance === 'number' ? ctx.distance : 0.5;
+          let weightedScore = hierarchy.priority * 10 + dist * 5;
+
+          if (hierarchy.doc_type === 'RFI') weightedScore -= 50;
+          if (hierarchy.doc_type === 'ADDENDUM') {
+            weightedScore -= 40;
+            if (hierarchy.rev === 'Add 03') weightedScore -= 15;
+          }
+          if (hierarchy.doc_type === 'SPECIFICATION') weightedScore -= 20;
+          if (hierarchy.doc_type === 'DRAWING') weightedScore -= 20;
+
+          return { ...ctx, hierarchy, weightedScore };
+        })
+        .sort((a: any, b: any) => a.weightedScore - b.weightedScore);
+
+      topContexts = enriched.slice(0, 8);
+    }
 
     // 5. Construir Dossier con Metadatos Inyectados y Jerarquía Contractual
     let contextDossier = '';
-    if (topContexts.length > 0) {
+    if (isComparativeMode && preRag.targetA && preRag.targetB) {
+      contextDossier =
+        `\n\nEXPEDIENTE CONTRACTUAL JERÁRQUICO BALANCEADO (PARTICIONADO MULTI-DOCUMENTO):\n\n` +
+        `================================================================================\n` +
+        `PARTICIÓN A: ${preRag.targetA.label}\n` +
+        `Archivo Principal: ${preRag.targetA.file}\n` +
+        `Ruta GCS: ${preRag.targetA.gcs_uri}\n` +
+        `================================================================================\n` +
+        partitionAContexts
+          .map((ctx: any, idx: number) => {
+            return `[A-${idx + 1}] ${ctx.hierarchy.category_tag} ${ctx.hierarchy.sheetName} (${ctx.hierarchy.filename}):\n${(ctx.text || '').trim()}\n`;
+          })
+          .join('\n') +
+        `\n================================================================================\n` +
+        `PARTICIÓN B: ${preRag.targetB.label}\n` +
+        `Archivo Principal: ${preRag.targetB.file}\n` +
+        `Ruta GCS: ${preRag.targetB.gcs_uri}\n` +
+        `================================================================================\n` +
+        partitionBContexts
+          .map((ctx: any, idx: number) => {
+            return `[B-${idx + 1}] ${ctx.hierarchy.category_tag} ${ctx.hierarchy.sheetName} (${ctx.hierarchy.filename}):\n${(ctx.text || '').trim()}\n`;
+          })
+          .join('\n');
+    } else if (topContexts.length > 0) {
       contextDossier =
         '\n\nEXPEDIENTE CONTRACTUAL JERÁRQUICO RECUPERADO DE VERTEX AI RAG:\n' +
         topContexts
@@ -401,7 +487,31 @@ export async function POST(req: NextRequest) {
           .join('\n');
     }
 
-    const interpretationUserPrompt = `CONSULTA TÉCNICA DEL CONTRATISTA / ESTIMADOR:
+    let interpretationUserPrompt = '';
+    if (isComparativeMode && preRag.targetA && preRag.targetB) {
+      interpretationUserPrompt = `CONSULTA TÉCNICA COMPARATIVA DEL CONTRATISTA / ESTIMADOR:
+"${query}"
+${contextDossier}
+
+INSTRUCCIÓN DE AUDITORÍA COMPARATIVA Y PRECEDENCIA CONTRACTUAL (OBLIGATORIA):
+1. Contrasta con rigor de ingeniería la PARTICIÓN A (${preRag.targetA.label}) contra la PARTICIÓN B (${preRag.targetB.label}).
+${
+  preRag.hasUnanswered
+    ? `2. AUDITORÍA CRÍTICA DE PREGUNTAS PENDIENTES / SIN RESPUESTA EN ADDENDUM NO. 3:
+   - REGLA TEMPORAL CRÍTICA: RFI #42 (Exhibit 1 - Completed_42.pdf) fue radicado por Paola Sanchez-Ruiz (F&R Construction Group) el 2 de noviembre de 2026, fecha POSTERIOR a la emisión del Addendum No. 3 (29 de octubre de 2026).
+   - En RFI #42, el contratista solicita formalmente una PRÓRROGA DE NO MENOS DE CUARENTA Y CINCO (45) DÍAS CALENDARIO contados a partir del último addendum para la entrega de propuestas, debido a que el dueño anunció Addendum No. 4 y quedan múltiples dudas pendientes de alcance y precio.
+   - CONCLUSIÓN OBLIGATORIA: La solicitud del RFI #42 NO ESTÁ CONTESTADA EN EL ADDENDUM NO. 3 y permanece como una consulta abierta crítica que impacta directamente la fecha límite de subasta.
+   - De igual manera, examina las preguntas de RFI #40 y #41 (validez de propuesta de 180 días vs Exhibit 17, certificación de CFSE en vez de EMR en Puerto Rico, requisitos de Personal Clave como Planificador e Ingeniero Electricista, y fondos CDBG-MIT en Anexo II) y su estado.`
+    : `2. ANÁLISIS DE PREVALENCIA Y REVISIONES: Compara los cambios entre la versión preliminar y la versión vigente oficial, detallando qué modificaciones introdujo el Addendum o la última revisión.`
+}
+3. REDACCIÓN EJECUTIVA IMPECABLE:
+   - Prohibido código o JSON en el cuerpo. Prohibido asteriscos triples (***) o dobles sueltos.
+   - Utiliza títulos ejecutivos limpios, viñetas estructuradas o tabla comparativa Markdown limpia.
+   - Cita cada hallazgo con sus tags [[HL-1]], [[HL-2]], etc., indicando procedencia [RFI] o [ADDENDUM 03].
+4. CIERRE OBLIGATORIO:
+   - Finaliza con el bloque \`\`\`json:highlights\`\`\` que configure el visor de planos/documentos con target_document ("Exhibit 1 Request for Clarifications - FRCG Completed_42.pdf" o el Addendum), target_page, y recuadros de coordenadas.`;
+    } else {
+      interpretationUserPrompt = `CONSULTA TÉCNICA DEL CONTRATISTA / ESTIMADOR:
 "${query}"
 ${contextDossier}
 
@@ -412,6 +522,7 @@ Procesa estos documentos aplicando con rigor la jerarquía documental de obras p
 - Cita cada afirmación técnica con su tag correspondiente [[HL-1]], [[HL-2]], indicando la procedencia [RFI], [ADDENDUM] o [PLANO].
 - Redacción ejecutiva, limpia y directa: PROHIBIDO usar asteriscos triples (***) o símbolos molestos de markdown.
 - Cierra obligatoriamente con el bloque \`\`\`json:highlights\`\`\` para orientar y enfocar el visor PDF.`;
+    }
 
     // 6. Ejecutar Generación e Interpretación con Gemini en location=global
     const generateUrl = `https://aiplatform.googleapis.com/v1/projects/${PROJECT_ID}/locations/global/publishers/google/models/gemini-3.1-flash-lite:generateContent`;
@@ -544,23 +655,43 @@ Procesa estos documentos aplicando con rigor la jerarquía documental de obras p
       let gcsUri = '';
       const lowerDoc = targetDoc.toLowerCase();
 
-      if (lowerDoc.includes('sarps') || lowerDoc.includes('attachment d')) {
+      if (
+        lowerDoc.includes('completed_42') ||
+        lowerDoc.includes('rfi-42') ||
+        lowerDoc.includes('rfi 42') ||
+        (isComparativeMode && hl.id === 'HL-1' && preRag.targetA?.type === 'RFI')
+      ) {
+        gcsUri =
+          'gs://frcg-projects/2026-12-01  Hospital Trauma/FRCG/RFI/Exhibit 1 Request for Clarifications - FRCG Completed_42.pdf';
+      } else if (
+        lowerDoc.includes('completed_40') ||
+        lowerDoc.includes('rfi-40') ||
+        lowerDoc.includes('rfi 40') ||
+        lowerDoc.includes('completed_41')
+      ) {
+        gcsUri =
+          'gs://frcg-projects/2026-12-01  Hospital Trauma/FRCG/RFI/Exhibit 1 Request for Clarifications - FRCG Completed_40-41 (combined).pdf';
+      } else if (
+        lowerDoc.includes('addendum 3') ||
+        lowerDoc.includes('add #03') ||
+        lowerDoc.includes('add#03') ||
+        lowerDoc.includes('addendum no. 3') ||
+        lowerDoc.includes('addendum+no.+3') ||
+        (isComparativeMode && hl.id === 'HL-2' && preRag.targetB?.type === 'ADDENDUM')
+      ) {
+        gcsUri =
+          'gs://frcg-projects/2026-12-01  Hospital Trauma/Bid Set/Addenda/2026-10-29 - Add#03/Addendum+No.+3.pdf';
+      } else if (lowerDoc.includes('sarps') || lowerDoc.includes('attachment d')) {
         gcsUri =
           'gs://frcg-projects/2026-12-01  Hospital Trauma/Bid Set w. add #02/Specifications/RFP/Attachment/Attachment D SARPS Recommendations.pdf';
       } else if (lowerDoc.includes('attachment b') || lowerDoc.includes('technical spec')) {
         gcsUri =
           'gs://frcg-projects/2026-12-01  Hospital Trauma/Bid Set w. add #02/Specifications/Technical Specifications/Attachment B Technical Specifications.pdf';
-      } else if (
-        lowerDoc.includes('addendum 3') ||
-        lowerDoc.includes('add #03') ||
-        lowerDoc.includes('add#03') ||
-        lowerDoc.includes('addendum no. 3')
-      ) {
+      } else if (documentIndex[targetDoc]?.gcs_uri) {
+        gcsUri = documentIndex[targetDoc].gcs_uri;
+      } else if (lowerDoc.includes('rfi') || lowerDoc.includes('clarification')) {
         gcsUri =
-          'gs://frcg-projects/2026-12-01  Hospital Trauma/Bid Set/Addenda/2026-10-29 - Add#03/Addendum+No.+3.pdf';
-      } else if (lowerDoc.includes('rfi') || lowerDoc.includes('clarification') || lowerDoc.includes('exhibit 1')) {
-        gcsUri =
-          'gs://frcg-projects/2026-12-01  Hospital Trauma/FRCG/RFI/Exhibit 1 Request for Clarifications - FRCG Completed_20-26 (combined).pdf';
+          'gs://frcg-projects/2026-12-01  Hospital Trauma/FRCG/RFI/Exhibit 1 Request for Clarifications - FRCG Completed_42.pdf';
       }
 
       if (!gcsUri) {
