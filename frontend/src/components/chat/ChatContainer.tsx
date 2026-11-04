@@ -12,6 +12,7 @@ import { MessageItem } from './MessageItem';
 
 interface ChatContainerProps {
   messages: ChatMessage[];
+  sessionId?: string;
   activeCitationId?: string;
   onSendMessage: (text: string) => void;
   onSelectCitation: (citation: CitationSource) => void;
@@ -23,6 +24,7 @@ interface ChatContainerProps {
 
 export const ChatContainer: React.FC<ChatContainerProps> = ({
   messages,
+  sessionId,
   activeCitationId,
   onSendMessage,
   onSelectCitation,
@@ -140,22 +142,33 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({
             <span>Cloud Run • v2.1 AEC Live</span>
           </div>
 
+          {sessionId && (
+            <span
+              className="hidden xl:inline-flex items-center gap-1.5 text-[11px] font-mono text-[#8a93a0] px-2.5 py-1 rounded bg-[#12151b] border border-[#1f242e]"
+              title={`ID de Sesión: ${sessionId}`}
+            >
+              <span className="text-zinc-500">ID:</span>
+              <span className="text-zinc-300 font-semibold">{sessionId.substring(0, 8)}</span>
+            </span>
+          )}
+
           <button
             onClick={handleShare}
             className="flex items-center gap-1.5 text-xs text-[#8a93a0] hover:text-[#ffffff] px-2.5 py-1 rounded bg-[#12151b] border border-[#1f242e] hover:border-[#2f3747] transition-all"
-            title="Copy share link"
+            title="Copiar enlace de sesión con parámetros"
           >
             {isCopiedShare ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Share2 className="w-3.5 h-3.5" />}
-            <span>{isCopiedShare ? 'Copied' : 'Share'}</span>
+            <span>{isCopiedShare ? 'Copiado' : 'Share'}</span>
           </button>
 
           {onClearChat && (
             <button
               onClick={onClearChat}
-              className="p-1 rounded text-[#8a93a0] hover:text-[#ffffff] hover:bg-[#12151b] transition-colors"
-              title="New consultation"
+              className="flex items-center gap-1.5 text-xs text-[#8a93a0] hover:text-[#ffffff] px-2.5 py-1 rounded bg-[#12151b] border border-[#1f242e] hover:border-[#2f3747] transition-all cursor-pointer shadow-sm hover:shadow"
+              title="Nueva consulta (limpiar chat y reiniciar sesión)"
             >
-              <RotateCcw className="w-3.5 h-3.5" />
+              <RotateCcw className="w-3.5 h-3.5 text-amber-400" />
+              <span className="font-medium hidden sm:inline">Nueva Consulta</span>
             </button>
           )}
         </div>

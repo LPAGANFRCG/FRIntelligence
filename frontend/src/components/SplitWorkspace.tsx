@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { ChatContainer } from './chat/ChatContainer';
 import { BlueprintViewer } from './viewer/BlueprintViewer';
 import { RfiDraftModal } from './modals/RfiDraftModal';
@@ -9,14 +9,27 @@ import { ChatMessage, CitationSource } from '@/types/construction-rag';
 import { useRAGQuery } from '@/hooks/useRAGQuery';
 import { MOCK_CITATIONS } from '@/mock/constructionData';
 
-export const SplitWorkspace: React.FC = () => {
-  const [messages, setMessages] = useState<ChatMessage[]>([
-    {
-      id: 'msg-welcome',
-      role: 'assistant',
-      timestamp: '10:00 AM',
-      content: `### 👷 Asistente Senior de Ingeniería y Estimados AEC — Puerto Rico
-Conectado en tiempo real a **Vertex AI RAG Engine** (Proyecto: \`frcg-antigravity\` / **FRCG-Tools-AG**).
+const STORAGE_KEY = 'hospital_trauma_active_chat';
+const SESSION_PARAM = 'session';
+
+function generateUUID(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
+    const r = (Math.random() * 16) | 0;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
+const DEFAULT_WELCOME_MESSAGES: ChatMessage[] = [
+  {
+    id: 'msg-welcome',
+    role: 'assistant',
+    timestamp: '10:00 AM',
+    content: `### 👷 Asistente Senior de Ingeniería y Estimados AEC — Puerto Rico
+Conectado en tiempo real a Vertex AI RAG Engine (Proyecto: \`frcg-antigravity\` / FRCG-Tools-AG).
 Corpus ID: \`255759598760230912\` (944 planos y especificaciones contractuales indexadas).
 
 ---
@@ -31,20 +44,32 @@ Corpus ID: \`255759598760230912\` (944 planos y especificaciones contractuales i
   - Exige placa base de interface y varillas roscadas ancladas a la losa superior de concreto, diseñadas con un factor de seguridad mínimo de **2.0** contra cargas de sismo y oscilación de los brazos articulados.
 
 * **División 23 / 26 — Coordinación MEP y Conflicto con Addendum No. 3**:
-  - **Advertencia Crítica**: La hoja preliminar \`A-1.2A (Rev 0)\` fue modificada por el **Addendum No. 3 (RFI-372)**, el cual rediseñó el cielo raso para incorporar cuatro (4) difusores de flujo laminar unidireccional y filtros HEPA terminales (99.97% @ 0.3μm).
+  - Advertencia Crítica: La hoja preliminar \`A-1.2A (Rev 0)\` fue modificada por el **Addendum No. 3 (RFI-372)**, el cual rediseñó el cielo raso para incorporar cuatro (4) difusores de flujo laminar unidireccional y filtros HEPA terminales (99.97% @ 0.3μm).
 
 > [!TIP]
-> **Recomendación Práctica de Campo y Licitación**:
-> Haz clic en el badge interactivo **[[HL-1]]** para ver el plano \`A-1.2A\` auto-rotado a 90° horizontal con el recuadro que abarca el renglón completo de la tabla. O selecciona cualquiera de las consultas rápidas abajo para auditar el resto de las disciplinas MEP y acabados.`,
-      citations: [MOCK_CITATIONS['cite-a12a']],
-      suggested_followups: [
-        "¿Cuáles son los requerimientos de filtros HEPA y flujo laminar en Addendum 3?",
-        "Auditar especificaciones de scrub sinks P16 y rough-in de plomería",
-        "Verificar acabados de pintura epóxica y plafón clean room en Quirófanos",
-        "Redactar RFI formal para Procore sobre interferencia de lámparas y ductos",
-      ],
-    },
-  ]);
+> Recomendación Práctica de Campo y Licitación:
+> Haz clic en el badge interactivo [[HL-1]] para ver el plano \`A-1.2A\` auto-rotado a 90° horizontal con el recuadro que abarca el renglón completo de la tabla. O selecciona cualquiera de las consultas rápidas abajo para auditar el resto de las disciplinas MEP y acabados.`,
+    citations: [
+      {
+        ...MOCK_CITATIONS['cite-a12a'],
+        doc_type: 'DRAWING',
+        category_tag: '[PLANO]',
+        priority: 5,
+      },
+    ],
+    suggested_followups: [
+      '¿Cuáles son las aclaraciones vigentes de RFI sobre plomería y gases médicos?',
+      'Verificar cambios del Addendum No. 3 en techos y filtros HEPA de quirófanos',
+      'Auditar interferencias entre ductos MEP y especificación de Plenum',
+      'Generar borrador de RFI formal para Procore ante ambigüedad en planos',
+    ],
+  },
+];
+
+export const SplitWorkspace: React.FC = () => {
+  const [messages, setMessages] = useState<ChatMessage[]>(DEFAULT_WELCOME_MESSAGES);
+  const [sessionId, setSessionId] = useState<string>('');
+  const [isHydrated, setIsHydrated] = useState<boolean>(false);
 
   const [selectedCitation, setSelectedCitation] = useState<CitationSource | undefined>(
     MOCK_CITATIONS['cite-a12a']
@@ -55,7 +80,89 @@ Corpus ID: \`255759598760230912\` (944 planos y especificaciones contractuales i
   // Hook conectado directamente a la API RAG real
   const { queryRAG, isLoading, error } = useRAGQuery();
 
-  // Handler 100% dinámico y real: ELIMINADO EL MOCK HARDCODED
+  // 1. Hidratación inicial desde localStorage y URL
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    try {
+      const urlParams = new URLSearchParams(window.location.search);
+      let currentSessionId = urlParams.get(SESSION_PARAM);
+
+      const cachedRaw = localStorage.getItem(STORAGE_KEY);
+      if (cachedRaw) {
+        const cached = JSON.parse(cachedRaw);
+        if (cached && Array.isArray(cached.messages) && cached.messages.length > 0) {
+          setMessages(cached.messages);
+          if (!currentSessionId && cached.sessionId) {
+            currentSessionId = cached.sessionId;
+          }
+        }
+      }
+
+      if (!currentSessionId) {
+        currentSessionId = generateUUID();
+      }
+
+      setSessionId(currentSessionId);
+
+      // Sincronizar URL con el identificador de sesión sin recargar
+      const newUrl = new URL(window.location.href);
+      if (newUrl.searchParams.get(SESSION_PARAM) !== currentSessionId) {
+        newUrl.searchParams.set(SESSION_PARAM, currentSessionId);
+        window.history.replaceState({}, '', newUrl.toString());
+      }
+    } catch (e) {
+      console.warn('Error hydrating chat state from localStorage:', e);
+    } finally {
+      setIsHydrated(true);
+    }
+  }, []);
+
+  // 2. Persistencia automática inmediata en localStorage ante cambios en messages
+  useEffect(() => {
+    if (!isHydrated || typeof window === 'undefined') return;
+
+    try {
+      localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({
+          sessionId: sessionId || generateUUID(),
+          messages,
+          updatedAt: Date.now(),
+        })
+      );
+    } catch (e) {
+      console.warn('Error saving chat to localStorage:', e);
+    }
+  }, [messages, sessionId, isHydrated]);
+
+  // Handler para reiniciar la sesión ("Nueva Consulta" / "Clear Chat")
+  const handleClearChat = () => {
+    const newSessionId = generateUUID();
+    setSessionId(newSessionId);
+    setMessages(DEFAULT_WELCOME_MESSAGES);
+    setSelectedCitation(MOCK_CITATIONS['cite-a12a']);
+
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem(
+          STORAGE_KEY,
+          JSON.stringify({
+            sessionId: newSessionId,
+            messages: DEFAULT_WELCOME_MESSAGES,
+            updatedAt: Date.now(),
+          })
+        );
+        const newUrl = new URL(window.location.href);
+        newUrl.searchParams.set(SESSION_PARAM, newSessionId);
+        window.history.replaceState({}, '', newUrl.toString());
+      } catch (e) {
+        console.warn('Error resetting chat storage:', e);
+      }
+    }
+  };
+
+  // Handler 100% dinámico y real conectado a Vertex AI RAG
   const handleSendMessage = async (queryText: string) => {
     // 1. Mensaje del usuario
     const userMsg: ChatMessage = {
@@ -107,12 +214,13 @@ Corpus ID: \`255759598760230912\` (944 planos y especificaciones contractuales i
       <div className="w-1/2 h-full flex flex-col bg-[#0b0d11] overflow-hidden shrink-0">
         <ChatContainer
           messages={messages}
+          sessionId={sessionId}
           activeCitationId={selectedCitation?.id}
           onSendMessage={handleSendMessage}
           onSelectCitation={(citation) => setSelectedCitation(citation)}
           onOpenRfiDraft={(msg) => setActiveRfiMessage(msg)}
           onOpenCompare={() => setIsCompareModalOpen(true)}
-          onClearChat={() => setMessages([])}
+          onClearChat={handleClearChat}
           isStreaming={isLoading}
         />
       </div>
