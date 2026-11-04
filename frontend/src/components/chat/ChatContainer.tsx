@@ -402,6 +402,52 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({
 
       {/* 3. Barra de entrada flotante inferior (Chat Dock) */}
       <div className="p-4 lg:p-6 bg-gradient-to-t from-[#0b0d11] via-[#0b0d11] to-transparent shrink-0">
+        {/* Quick Actions AEC Toolbar */}
+        <div className="flex items-center gap-2 mb-2.5 overflow-x-auto pb-1 no-scrollbar">
+          <span className="text-[10px] font-mono uppercase text-zinc-500 shrink-0 font-bold tracking-wider">
+            ACCIONES RÁPIDAS:
+          </span>
+          <button
+            type="button"
+            onClick={() => {
+              setInputText(
+                'Genera un borrador formal de RFI en formato Procore describiendo la discrepancia técnica detectada en la siguiente partida: '
+              );
+              textareaRef.current?.focus();
+            }}
+            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium bg-[#141824] hover:bg-[#1a2030] text-amber-300 border border-amber-500/30 transition-all shrink-0 shadow-sm hover:border-amber-400"
+          >
+            <FileSpreadsheet className="h-3.5 w-3.5 text-amber-400" />
+            <span>Generar RFI</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setInputText(
+                'Realiza un cómputo métrico (Takeoff) y desglose de cantidades en tabla estructurada CSI MasterFormat para: '
+              );
+              textareaRef.current?.focus();
+            }}
+            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium bg-[#141824] hover:bg-[#1a2030] text-emerald-300 border border-emerald-500/30 transition-all shrink-0 shadow-sm hover:border-emerald-400"
+          >
+            <Layers className="h-3.5 w-3.5 text-emerald-400" />
+            <span>Takeoff / Estimado</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setInputText(
+                'Audita el conflicto y orden de prevalencia contractual entre las siguientes especificaciones o notas de planos: '
+              );
+              textareaRef.current?.focus();
+            }}
+            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium bg-[#141824] hover:bg-[#1a2030] text-cyan-300 border border-cyan-500/30 transition-all shrink-0 shadow-sm hover:border-cyan-400"
+          >
+            <Sparkles className="h-3.5 w-3.5 text-cyan-400" />
+            <span>Auditar Conflicto</span>
+          </button>
+        </div>
+
         <div className="bg-[#151821] border border-[#232834] rounded-2xl p-2.5 shadow-2xl focus-within:border-amber-500/50 transition-colors">
           {/* Text Area */}
           <textarea

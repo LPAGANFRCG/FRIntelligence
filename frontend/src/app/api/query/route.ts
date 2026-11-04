@@ -263,13 +263,22 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Query string cannot be empty' }, { status: 400 });
     }
 
-    // 1. Obtener Token de Google Cloud ADC
-    const client = await auth.getClient();
-    const tokenResponse = await client.getAccessToken();
-    const token = tokenResponse.token;
+    // 1. Obtener Token de Google Cloud ADC o API Key
+    const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '';
+    let token: string | null = null;
 
-    if (!token) {
-      throw new Error('Failed to acquire Google Cloud ADC Access Token');
+    try {
+      const client = await auth.getClient();
+      const tokenResponse = await client.getAccessToken();
+      token = tokenResponse.token || null;
+    } catch (authErr) {
+      console.warn('[Auth Warning] No local ADC credentials found; relying on GEMINI_API_KEY.');
+    }
+
+    if (!token && !apiKey) {
+      throw new Error(
+        'No authentication provided. Set GEMINI_API_KEY in .env.local or run `gcloud auth application-default login`.'
+      );
     }
 
     // 2. Pre-RAG Intent Routing y Clasificación de Metadatos
@@ -287,6 +296,11 @@ export async function POST(req: NextRequest) {
       topK: number = 8
     ) => {
       try {
+        if (!token) {
+          console.log('[RAG] No ADC token present; skipping Vertex RAG retrieveContexts.');
+          return [];
+        }
+
         const ragResource: any = {
           ragCorpus: `projects/${PROJECT_ID}/locations/us-central1/ragCorpora/255759598760230912`,
         };
@@ -544,7 +558,9 @@ Procesa estos documentos aplicando con rigor la jerarquía documental de obras p
     }
 
     // 6. Ejecutar Generación e Interpretación con Gemini en location=global
-    const generateUrl = `https://aiplatform.googleapis.com/v1/projects/${PROJECT_ID}/locations/global/publishers/google/models/gemini-3.1-flash-lite:generateContent`;
+    const generateUrl = apiKey
+      ? `https://aiplatform.googleapis.com/v1/projects/${PROJECT_ID}/locations/global/publishers/google/models/gemini-3.1-flash-lite:generateContent?key=${apiKey}`
+      : `https://aiplatform.googleapis.com/v1/projects/${PROJECT_ID}/locations/global/publishers/google/models/gemini-3.1-flash-lite:generateContent`;
 
     const modelPayload = {
       systemInstruction: {
@@ -563,13 +579,17 @@ Procesa estos documentos aplicando con rigor la jerarquía documental de obras p
       },
     };
 
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'x-goog-api-client': 'vertex-agent-studio-prompt-app/1',
+    };
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+
     const genResponse = await fetch(generateUrl, {
       method: 'POST',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
-        'x-goog-api-client': 'vertex-agent-studio-prompt-app/1',
-      },
+      headers,
       body: JSON.stringify(modelPayload),
     });
 
