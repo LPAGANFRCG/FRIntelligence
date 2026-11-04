@@ -102,8 +102,13 @@ export function parsePreRagIntent(query: string): PreRagIntentResult {
     };
   }
 
-  // Caso 2: Comparación de versiones de Planos (ej. A-1.2A entre Bid Set y Addenda)
+  // Detección universal de Planos (Sheet Number ej. A-1.2A, CU-101, S-1.0)
   const sheetMatch = query.match(/([A-Z]{1,2}-\d+(\.\d+)?[A-Z]?)/i);
+  if (sheetMatch) {
+    resolvedEntities.sheetNumber = sheetMatch[1].toUpperCase();
+  }
+
+  // Caso 2: Comparación de versiones de Planos (ej. A-1.2A entre Bid Set y Addenda)
   if (
     sheetMatch &&
     (lower.includes('revisi') ||
@@ -115,7 +120,6 @@ export function parsePreRagIntent(query: string): PreRagIntentResult {
       lower.includes('diferencia'))
   ) {
     const sheet = sheetMatch[1].toUpperCase();
-    resolvedEntities.sheetNumber = sheet;
     const sheetData = manifest.drawings?.[sheet];
 
     if (sheetData && Array.isArray(sheetData.versions) && sheetData.versions.length > 0) {

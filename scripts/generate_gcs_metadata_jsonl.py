@@ -117,7 +117,55 @@ def classify_document(rel_path, filename):
             is_latest = False
             sheet_number = "RFI"
 
-    # 2. Addendum
+    # 2. Drawings (Check BEFORE Addenda so that "Bid Set w. add #02/Drawings" is treated as drawings)
+    elif "/drawings/" in lower_path or re.match(r'^[a-z]{1,2}-\d+', lower_name) or re.match(r'^(cu|ed|ex|gl|pl|ts|fp|ep|mp|sp)-\d+', lower_name) or "plans" in lower_name:
+        doc_type = "drawing"
+        sheet_m = re.match(r'([a-z]{1,2}-\d+(\.\d+)?[a-z]?)', lower_name)
+        if sheet_m:
+            sheet_number = sheet_m.group(1).upper()
+        else:
+            sheet_number = filename[:12].upper()
+            
+        if sheet_number.startswith("A-"):
+            discipline = "Architectural"
+        elif sheet_number.startswith("S-"):
+            discipline = "Structural"
+        elif sheet_number.startswith("M-"):
+            discipline = "Mechanical"
+        elif sheet_number.startswith("E-"):
+            discipline = "Electrical"
+        elif sheet_number.startswith("P-"):
+            discipline = "Plumbing"
+        elif sheet_number.startswith("C-") or sheet_number.startswith("CU-"):
+            discipline = "Civil"
+        elif sheet_number.startswith("FP-"):
+            discipline = "Fire Protection"
+        else:
+            discipline = "General"
+            
+        rev_m = re.search(r'rev\.?(\d+)', lower_name)
+        if rev_m:
+            sequence_or_revision = f"Rev.{rev_m.group(1)}"
+        elif "add #02" in lower_path or "add 02" in lower_name or "add#02" in lower_path:
+            sequence_or_revision = "Add 02"
+        else:
+            sequence_or_revision = "Rev 0"
+            
+        # Versioning precedence: Add 02 or Bid Set w. add #02 is latest
+        if "old" in lower_path or "superseded" in lower_path:
+            is_latest = False
+            sequence_or_revision = "Superseded"
+        elif "bid set w. add #02" in lower_path or "add#02" in lower_path or "add #02" in lower_path:
+            is_latest = True
+            sequence_or_revision = "Add 02"
+        elif "bid set/" in lower_path:
+            # Base Bid Set is superseded by Bid Set w. add #02
+            is_latest = False
+            sequence_or_revision = "Rev 0"
+        else:
+            is_latest = True
+
+    # 3. Addendum
     elif "/addenda/" in lower_path or "addendum" in lower_name or "enmienda" in lower_name or "add #" in lower_path or "add#" in lower_path:
         doc_type = "addendum"
         discipline = "Addenda"
@@ -138,7 +186,7 @@ def classify_document(rel_path, filename):
             is_latest = False
             sheet_number = "ADDENDUM"
 
-    # 3. Specifications
+    # 4. Specifications
     elif "/specifications/" in lower_path or "/ts-" in lower_name or "attachment" in lower_name or "atch-" in lower_name:
         doc_type = "spec"
         discipline = "Specs"
@@ -150,49 +198,6 @@ def classify_document(rel_path, filename):
         else:
             sequence_or_revision = "Rev 0"
             sheet_number = filename[:20]
-
-    # 4. Drawings
-    elif "/drawings/" in lower_path or re.match(r'^[a-z]{1,2}-\d+', lower_name) or re.match(r'^(cu|ed|ex|gl|pl|ts|fp|ep|mp|sp)-\d+', lower_name):
-        doc_type = "drawing"
-        sheet_m = re.match(r'([a-z]{1,2}-\d+(\.\d+)?[a-z]?)', lower_name)
-        if sheet_m:
-            sheet_number = sheet_m.group(1).upper()
-        else:
-            sheet_number = filename[:12].upper()
-            
-        if sheet_number.startswith("A-"):
-            discipline = "Architectural"
-        elif sheet_number.startswith("S-"):
-            discipline = "Structural"
-        elif sheet_number.startswith("M-"):
-            discipline = "Mechanical"
-        elif sheet_number.startswith("E-"):
-            discipline = "Electrical"
-        elif sheet_number.startswith("P-"):
-            discipline = "Plumbing"
-        elif sheet_number.startswith("C-") or sheet_number.startswith("CU-"):
-            discipline = "Civil"
-        else:
-            discipline = "General"
-            
-        rev_m = re.search(r'rev\.?(\d+)', lower_name)
-        if rev_m:
-            sequence_or_revision = f"Rev.{rev_m.group(1)}"
-        elif "add #02" in lower_path or "add 02" in lower_name:
-            sequence_or_revision = "Add 02"
-        else:
-            sequence_or_revision = "Rev 0"
-            
-        # Versioning precedence: Add 02 or Bid Set w. add #02 is latest
-        if "old" in lower_path or "superseded" in lower_path:
-            is_latest = False
-        elif "bid set w. add #02" in lower_path or "add #02" in lower_path or "add#03" in lower_path:
-            is_latest = True
-        elif "bid set/" in lower_path:
-            # If in base Bid Set, superseded if updated in Bid Set w. add #02
-            is_latest = False
-        else:
-            is_latest = True
 
     # 5. Takeoff
     elif "take-off" in lower_path or "take off" in lower_name:
