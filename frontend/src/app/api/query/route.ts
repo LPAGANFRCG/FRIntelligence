@@ -558,7 +558,9 @@ Procesa estos documentos aplicando con rigor la jerarquía documental de obras p
     }
 
     // 6. Ejecutar Generación e Interpretación con Gemini en location=global
-    const generateUrl = apiKey
+    // IMPORTANTE: Google rechaza peticiones que envíen token Bearer y API key simultáneamente.
+    const useApiKey = !token && Boolean(apiKey);
+    const generateUrl = useApiKey
       ? `https://aiplatform.googleapis.com/v1/projects/${PROJECT_ID}/locations/global/publishers/google/models/gemini-3.1-flash-lite:generateContent?key=${apiKey}`
       : `https://aiplatform.googleapis.com/v1/projects/${PROJECT_ID}/locations/global/publishers/google/models/gemini-3.1-flash-lite:generateContent`;
 
@@ -601,6 +603,10 @@ Procesa estos documentos aplicando con rigor la jerarquía documental de obras p
       if (candidate?.content?.parts) {
         fullGeneratedText = candidate.content.parts.map((p: any) => p.text || '').join('\n');
       }
+    } else {
+      const errText = await genResponse.text();
+      console.error('[Gemini API Error]', genResponse.status, errText);
+      fullGeneratedText = `Error al invocar Gemini (${genResponse.status}): ${errText}`;
     }
 
     // 7. Procesar el Formato de Salida Dual
