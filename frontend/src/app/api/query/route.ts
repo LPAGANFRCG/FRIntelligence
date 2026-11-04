@@ -281,7 +281,11 @@ export async function POST(req: NextRequest) {
     let partitionAContexts: any[] = [];
     let partitionBContexts: any[] = [];
 
-    const fetchContextsForQuery = async (searchQuery: string, ragFileIds: string[] = []) => {
+    const fetchContextsForQuery = async (
+      searchQuery: string,
+      ragFileIds: string[] = [],
+      topK: number = 8
+    ) => {
       try {
         const ragResource: any = {
           ragCorpus: `projects/${PROJECT_ID}/locations/us-central1/ragCorpora/255759598760230912`,
@@ -301,13 +305,16 @@ export async function POST(req: NextRequest) {
               ragResources: [ragResource],
               vectorDistanceThreshold: 0.95,
             },
-            query: { text: searchQuery },
+            query: { text: searchQuery, similarityTopK: topK },
           }),
         });
 
         if (res.ok) {
           const data = await res.json();
           return data.contexts?.contexts || [];
+        } else {
+          const errText = await res.text();
+          console.warn(`Vertex RAG retrieval failed (${res.status}):`, errText);
         }
       } catch (e) {
         console.warn('Error fetching contexts for searchQuery:', searchQuery, e);
@@ -348,11 +355,22 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      // Ejecutar recuperaciones paralelas balanceadas y filtradas por metadata
+      // Ejecutar recuperaciones paralelas balanceadas con similarityTopK=8
       const [rawA, rawB] = await Promise.all([
-        fetchContextsForQuery(preRag.targetA.search_query, ragFileIdsA),
-        fetchContextsForQuery(preRag.targetB.search_query, ragFileIdsB),
+        fetchContextsForQuery(preRag.targetA.search_query, ragFileIdsA, 8),
+        fetchContextsForQuery(preRag.targetB.search_query, ragFileIdsB, 8),
       ]);
+
+      console.log(`[RAG Retrieval Audit] Query: "${query}"`);
+      console.log(`[RAG Retrieval Audit] Comparative Mode: ${isComparativeMode}`);
+      console.log(`[RAG Retrieval Audit] Partition A (${preRag.targetA.file}) - ragFileIds: ${JSON.stringify(ragFileIdsA)} -> Retrieved ${rawA.length} chunks`);
+      rawA.forEach((c: any, i: number) => {
+        console.log(`   [Chunk A-${i+1}] Source: ${c.sourceUri} | Dist: ${c.distance} | Snippet: ${(c.text || '').substring(0, 150).replace(/\n/g, ' ')}`);
+      });
+      console.log(`[RAG Retrieval Audit] Partition B (${preRag.targetB.file}) - ragFileIds: ${JSON.stringify(ragFileIdsB)} -> Retrieved ${rawB.length} chunks`);
+      rawB.forEach((c: any, i: number) => {
+        console.log(`   [Chunk B-${i+1}] Source: ${c.sourceUri} | Dist: ${c.distance} | Snippet: ${(c.text || '').substring(0, 150).replace(/\n/g, ' ')}`);
+      });
 
       const enrichPartition = (contexts: any[], target: any, partitionId: string) => {
         return contexts
@@ -369,8 +387,8 @@ export async function POST(req: NextRequest) {
           .sort((a: any, b: any) => a.weightedScore - b.weightedScore);
       };
 
-      partitionAContexts = enrichPartition(rawA, preRag.targetA, 'A').slice(0, 4);
-      partitionBContexts = enrichPartition(rawB, preRag.targetB, 'B').slice(0, 4);
+      partitionAContexts = enrichPartition(rawA, preRag.targetA, 'A').slice(0, 5);
+      partitionBContexts = enrichPartition(rawB, preRag.targetB, 'B').slice(0, 5);
 
       // Si RFI #42 es target, asegurar que la solicitud de prórroga esté 100% garantizada en Partición A
       if (preRag.targetA.type === 'RFI') {
@@ -391,7 +409,7 @@ export async function POST(req: NextRequest) {
 
       topContexts = [...partitionAContexts, ...partitionBContexts];
     } else {
-      // Modo estándar con metadata filter si detecta documento específico
+      // Modo estándar con metadata filter si detecta documento específico (similarityTopK=10)
       let specificFileIds: string[] = [];
       let searchQuery = query;
 
@@ -409,7 +427,8 @@ export async function POST(req: NextRequest) {
         if (entry?.rag_file_id) specificFileIds.push(entry.rag_file_id);
       }
 
-      const rawContexts = await fetchContextsForQuery(searchQuery, specificFileIds);
+      const rawContexts = await fetchContextsForQuery(searchQuery, specificFileIds, 10);
+      console.log(`[RAG Retrieval Audit] Standard Query: "${searchQuery}" | ragFileIds: ${JSON.stringify(specificFileIds)} -> Retrieved ${rawContexts.length} chunks`);
 
       const enriched = rawContexts
         .map((ctx: any) => {
@@ -429,7 +448,7 @@ export async function POST(req: NextRequest) {
         })
         .sort((a: any, b: any) => a.weightedScore - b.weightedScore);
 
-      topContexts = enriched.slice(0, 8);
+      topContexts = enriched.slice(0, 10);
     }
 
     // 5. Construir Dossier con Metadatos Inyectados y Jerarquía Contractual
@@ -754,6 +773,52 @@ Procesa estos documentos aplicando con rigor la jerarquía documental de obras p
         folder_path: h.folder_path,
         file_name: h.filename,
       };
+    });
+
+    // Asegurar que hasta 8-10 chunks de topContexts estén presentes en las citas para que la UI muestre el expediente completo
+    topContexts.forEach((ctx: any) => {
+      if (citations.length >= 8) return;
+      const snippet = (ctx.text || '').substring(0, 300);
+      const alreadyIncluded = citations.some(
+        (c) => c.gcs_uri === ctx.sourceUri && c.text_excerpt.substring(0, 50) === snippet.substring(0, 50)
+      );
+      if (!alreadyIncluded && ctx.sourceUri) {
+        const h = ctx.hierarchy;
+        const hlId = `HL-${citations.length + 1}`;
+        const gcsUri = ctx.sourceUri;
+        citations.push({
+          id: hlId,
+          sheet_number: h.sheetName,
+          target_document: h.filename,
+          sheet_title: h.sheetTitle,
+          discipline: h.discipline as DisciplineType,
+          revision: h.isCurrent ? `${h.category_tag} Current` : `${h.category_tag} Superseded`,
+          revision_date: '2026-10-29',
+          is_current_ifc: h.isCurrent,
+          page_number: 1,
+          target_page: 1,
+          total_pages: 1,
+          rotation: 0,
+          force_rotation: 0,
+          recommended_rotation: 0,
+          auto_zoom: 120,
+          recommended_zoom: 120,
+          file_url: `/api/pdf?uri=${encodeURIComponent(gcsUri)}`,
+          gcs_uri: gcsUri,
+          bounding_box: [10, 15 + ((citations.length * 10) % 50), 80, 20],
+          box_2d: [150 + ((citations.length * 80) % 550), 100, 350 + ((citations.length * 80) % 550), 900],
+          exact_quoted_text: snippet,
+          color: h.color,
+          style: { color: h.color, border_style: 'solid', border_width: 2 },
+          text_excerpt: snippet,
+          callout_tag: `${h.category_tag} ${h.sheetName}`,
+          doc_type: h.doc_type,
+          category_tag: h.category_tag,
+          priority: h.priority,
+          folder_path: h.folder_path,
+          file_name: h.filename,
+        });
+      }
     });
 
     return NextResponse.json({
