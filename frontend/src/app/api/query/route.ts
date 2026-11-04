@@ -9,23 +9,31 @@ const auth = new GoogleAuth({
   scopes: ['https://www.googleapis.com/auth/cloud-platform'],
 });
 
-const AEC_AUDITOR_SYSTEM_PROMPT = `Actúa como un Asistente Senior de Ingeniería y Estimados AEC para Proyectos de Construcción en Puerto Rico.
+const AEC_AUDITOR_SYSTEM_PROMPT = `Actúa como Consultor Senior de Ingeniería de Proyecto y Estimados AEC para Proyectos de Construcción en Puerto Rico (Estilo Chief Estimator & Senior Project Engineer).
 
-Tu objetivo es comunicarte como un profesional de obra y licitaciones: técnico, fluido, conciso y resolutivo. Prohibido mostrar código JSON suelto o parámetros técnicos en medio de la explicación.
+CRÍTICO — MOTOR DE INTERPRETACIÓN TÉCNICA (NO UN SIMPLE BUSCADOR):
+Está terminantemente prohibido limitarte a buscar, extraer o repetir pasajes de texto literales. Tu valor fundamental para el contratista es INTERPRETAR la información técnica para la toma de decisiones críticas de licitación y obra en Puerto Rico:
 
-DIRECTRICES CONVERSACIONALES Y DE ANÁLISIS:
-1. Tono y Redacción:
-   - Responde directamente con la conclusión técnica o el requerimiento encontrado.
-   - Usa viñetas limpias para desglosar especificaciones, divisiones CSI MasterFormat (ej. Div 03 - Concrete, Div 08 - Openings, Div 09 - Finishes, Div 11 - Equipment, Div 22/23 - MEP), materiales y coordinación entre disciplinas.
-   - Concluye siempre con una recomendación práctica de campo o licitación (ej. advertencia de RFI, costo adicional no previsto o submittal requerido).
-   - Utiliza unidades estándar de construcción y cubicación (CY, SF, LF, TON, EA).
-   - Si un plano o sección está marcado como SUPERSEDED o modificado por un Addendum, adviértelo con claridad en la primera línea.
+1. DIAGNÓSTICO TÉCNICO Y CONSTRUCTIBILIDAD:
+   - Interpreta qué significa la especificación físicamente en campo.
+   - Analiza la coordinación entre disciplinas: interferencias en plenum, clashes entre ductos de HVAC, losas estructurales, tuberías de gases médicos y equipos suspendidos.
+   - Aplica criterios de normativas locales y códigos (PRBC, ASCE 7, NFPA 99/101, ACI 318, ASHRAE 170).
 
-2. Vinculación con Planos:
-   - Usa etiquetas de referencia inline como [[HL-1]] al final de cada afirmación clave para que el frontend vincule el clic con el visor interactivo.
+2. PREVALENCIA CONTRACTUAL Y RESOLUCIÓN DE DISCREPANCIAS:
+   - Examina si el plano preliminar (Rev 0) entra en conflicto con Addendums posteriores (ej. Addendum No. 3) o especificaciones técnicas (Attachment B, Attachment F).
+   - Declara explícitamente cuál documento prevalece según el orden de prelación contractual de obras públicas en PR (Addendum > Planos contractuales > Planos preliminares).
 
-3. Separación de Metadata (OBLIGATORIO):
-   - Al final absoluto de tu respuesta, y ÚNICAMENTE dentro de un bloque cerrado \`\`\`json:highlights\`\`\`, incluye la metadata para el visor. El texto principal debe quedar 100% limpio de llaves o sintaxis JSON.
+3. IMPACTO ECONÓMICO, ESTIMADOS Y PRECIOS:
+   - Clasifica las partidas bajo su División CSI MasterFormat correspondiente (ej. Div 01 - General Requirements / Allowance, Div 05 - Metals / Structural Plenum Support, Div 11 - Equipment, Div 22/23 - MEP).
+   - Identifica con precisión si el suministro es del Dueño o del Contratista (OFCI vs CFCI) y desglosa costos ocultos (pruebas de hermeticidad, anclajes sísmicos Ip=1.5, balanceo de aire TAB).
+
+4. PLAN DE ACCIÓN INMEDIATO Y BORRADOR FORMAL DE RFI:
+   - Provee la recomendación operativa de campo: qué debe coordinar el superintendente mañana por la mañana en obra antes de ordenar la compra.
+   - Redacta el borrador formal de RFI para Procore ante cualquier vacío o ambigüedad de diseño.
+
+5. VINCULACIÓN ESPACIAL Y HIGHLIGHTS:
+   - Inserta tags inline [[HL-1]], [[HL-2]] al final de las afirmaciones clave.
+   - Al final absoluto y ÚNICAMENTE dentro de \`\`\`json:highlights\`\`\`, incluye la metadata para el visor interactivo (viewer_navigation y highlights). El texto principal debe quedar 100% limpio de llaves JSON.
 
 REGLAS DE PRECISIÓN GEOMÉTRICA Y VISOR:
 1. Ancho Completo de Celda y Renglón (Full Cell Width):
@@ -154,7 +162,27 @@ export async function POST(req: NextRequest) {
       rawContexts = ragData.contexts?.contexts || [];
     }
 
-    // 3. Ejecutar generación estricta con Gemini 3.1 Flash Lite en location=global
+    // 3. Construir Dossier de Documentos Recuperados para el Motor de Interpretación
+    let contextDossier = '';
+    if (rawContexts.length > 0) {
+      contextDossier = '\n\nEXPEDIENTE CONTRACTUAL RECUPERADO DE VERTEX AI RAG (PLANOS Y SPECS):\n' +
+        rawContexts.slice(0, 6).map((ctx: any, idx: number) => {
+          const fn = ctx.sourceUri ? ctx.sourceUri.split('/').pop() : `Documento_${idx + 1}.pdf`;
+          return `--- DOCUMENTO [${idx + 1}]: ${fn} (GCS: ${ctx.sourceUri}) ---\n${(ctx.text || '').trim()}\n`;
+        }).join('\n');
+    }
+
+    const interpretationUserPrompt = `CONSULTA TÉCNICA DEL CONTRATISTA / ESTIMADOR:
+"${query}"
+${contextDossier}
+
+INSTRUCCIÓN DE INTERPRETACIÓN TÉCNICA (OBLIGATORIA):
+Procesa estos documentos como Ingeniero de Proyecto y Estimador Senior en Puerto Rico:
+- NO te limites a repetir o copiar texto. Tu valor es interpretar la constructibilidad, las interferencias de montaje en plenum (MEP vs Estructura vs Arquitectura), la prevalencia de adendas (Addendum No. 3 vs planos preliminares) y el impacto económico (CSI MasterFormat, partidas ocultas y suministro OFCI vs CFCI).
+- Concluye con el plan de acción de obra y el borrador formal de RFI para Procore.
+- Asocia tus conclusiones con etiquetas inline [[HL-1]], [[HL-2]] y cierra con el bloque \`\`\`json:highlights\`\`\` para controlar el visor PDF.`;
+
+    // 4. Ejecutar Generación e Interpretación con Gemini en location=global
     const generateUrl = `https://aiplatform.googleapis.com/v1/projects/${PROJECT_ID}/locations/global/publishers/google/models/gemini-3.1-flash-lite:generateContent`;
 
     const modelPayload = {
@@ -164,7 +192,7 @@ export async function POST(req: NextRequest) {
       contents: [
         {
           role: 'user',
-          parts: [{ text: query }],
+          parts: [{ text: interpretationUserPrompt }],
         },
       ],
       tools: [
@@ -177,7 +205,7 @@ export async function POST(req: NextRequest) {
         },
       ],
       generationConfig: {
-        temperature: 0.1,
+        temperature: 0.45,
         topP: 0.95,
         maxOutputTokens: 8192,
       },
@@ -203,12 +231,12 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // 4. Procesar el Formato de Salida Dual
+    // 5. Procesar el Formato de Salida Dual
     let informeTecnico = fullGeneratedText;
     let documentMeta: any = null;
     let extractedHighlights: any[] = [];
 
-    const jsonMatch = fullGeneratedText.match(/```json:highlights\s*([\s\S]*?)\s*```/);
+    const jsonMatch = fullGeneratedText.match(/```(?:json:highlights|json)\s*([\s\S]*?)\s*```/i);
     if (jsonMatch) {
       try {
         const parsed = JSON.parse(jsonMatch[1]);
