@@ -135,6 +135,11 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({
         </div>
 
         <div className="flex items-center gap-2">
+          <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-[11px] font-mono text-emerald-400">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+            <span>Cloud Run • v2.1 AEC Live</span>
+          </div>
+
           <button
             onClick={handleShare}
             className="flex items-center gap-1.5 text-xs text-[#8a93a0] hover:text-[#ffffff] px-2.5 py-1 rounded bg-[#12151b] border border-[#1f242e] hover:border-[#2f3747] transition-all"
@@ -188,6 +193,29 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({
             </div>
           )}
         </div>
+
+        {/* 1-Click RAG Suggested Queries */}
+        {latestAssistantMessage?.suggested_followups && latestAssistantMessage.suggested_followups.length > 0 && !isStreaming && (
+          <div className="p-3.5 rounded-xl bg-[#151922]/80 border border-[#232938] space-y-2.5">
+            <div className="flex items-center gap-1.5 text-[11px] font-bold text-amber-400 uppercase tracking-wider">
+              <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+              <span>Consultas Técnicas Sugeridas (1-Click RAG Audit):</span>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {latestAssistantMessage.suggested_followups.map((suggestion, sIdx) => (
+                <button
+                  key={sIdx}
+                  type="button"
+                  onClick={() => onSendMessage(suggestion)}
+                  className="text-left text-xs p-2.5 rounded-lg bg-[#12151b] hover:bg-[#1a202c] border border-[#1f242e] hover:border-amber-500/50 text-zinc-300 hover:text-white transition-all shadow-sm flex items-start gap-2 group cursor-pointer"
+                >
+                  <span className="text-amber-400 group-hover:translate-x-0.5 transition-transform font-bold shrink-0">→</span>
+                  <span className="leading-snug">{suggestion}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Bloque 'Summary' con fila de utilidad inferior */}
         {latestAssistantMessage && !isStreaming && (

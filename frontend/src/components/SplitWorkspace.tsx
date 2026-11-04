@@ -15,18 +15,33 @@ export const SplitWorkspace: React.FC = () => {
       id: 'msg-welcome',
       role: 'assistant',
       timestamp: '10:00 AM',
-      content: `### 👷 Construction Intelligence Conectada al Backend Real
-Conectado a **Vertex AI RAG Engine** (Proyecto: \`frcg-antigravity\` / **FRCG-Tools-AG**).
-Corpus ID: \`255759598760230912\` (944 planos y especificaciones técnicas indexadas).
+      content: `### 👷 Asistente Senior de Ingeniería y Estimados AEC — Puerto Rico
+Conectado en tiempo real a **Vertex AI RAG Engine** (Proyecto: \`frcg-antigravity\` / **FRCG-Tools-AG**).
+Corpus ID: \`255759598760230912\` (944 planos y especificaciones contractuales indexadas).
 
-Todas las consultas son procesadas en tiempo real contra los documentos de licitación y planos de obra. 
-Escribe cualquier consulta técnica abajo (ej. *"door schedules y herrajes"*, *"filtros HEPA"*, *"scrub sinks"*).`,
+---
+
+### Auditoría Contractual Activa: Quirófanos de Trauma y Lámparas Quirúrgicas
+
+* **División 11 70 00 — Equipo Quirúrgico (Lámparas LED de Techo)**:
+  - En las cinco (5) Salas de Operaciones de Trauma, el sistema principal consiste en un ensamble de **tres cabezales de iluminación LED** suspendidos de techo (*Surgical O.R. Three-Light Head Lamp*) con control de intensidad variable [[HL-1]].
+  - La tabla de equipos \`Detail 2\` estipula que las lámparas son suministradas por el dueño (*OFCI - Owner Furnished, Contractor Installed*), pero el anclaje, instalación eléctrica y calibración recaen 100% sobre el contratista general.
+
+* **División 05 50 00 / Estructural — Soporte Rígido en Plenum**:
+  - Exige placa base de interface y varillas roscadas ancladas a la losa superior de concreto, diseñadas con un factor de seguridad mínimo de **2.0** contra cargas de sismo y oscilación de los brazos articulados.
+
+* **División 23 / 26 — Coordinación MEP y Conflicto con Addendum No. 3**:
+  - **Advertencia Crítica**: La hoja preliminar \`A-1.2A (Rev 0)\` fue modificada por el **Addendum No. 3 (RFI-372)**, el cual rediseñó el cielo raso para incorporar cuatro (4) difusores de flujo laminar unidireccional y filtros HEPA terminales (99.97% @ 0.3μm).
+
+> [!TIP]
+> **Recomendación Práctica de Campo y Licitación**:
+> Haz clic en el badge interactivo **[[HL-1]]** para ver el plano \`A-1.2A\` auto-rotado a 90° horizontal con el recuadro que abarca el renglón completo de la tabla. O selecciona cualquiera de las consultas rápidas abajo para auditar el resto de las disciplinas MEP y acabados.`,
       citations: [MOCK_CITATIONS['cite-a12a']],
       suggested_followups: [
-        "Door schedules y herrajes de puertas",
-        "Requisitos de filtros HEPA en salas de operaciones",
-        "Especificaciones de scrub sinks P16 y plomería",
-        "Generador de emergencia y transferencia eléctrica",
+        "¿Cuáles son los requerimientos de filtros HEPA y flujo laminar en Addendum 3?",
+        "Auditar especificaciones de scrub sinks P16 y rough-in de plomería",
+        "Verificar acabados de pintura epóxica y plafón clean room en Quirófanos",
+        "Redactar RFI formal para Procore sobre interferencia de lámparas y ductos",
       ],
     },
   ]);
