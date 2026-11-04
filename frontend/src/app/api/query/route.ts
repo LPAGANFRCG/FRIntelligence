@@ -180,6 +180,7 @@ INSTRUCCIÓN DE INTERPRETACIÓN TÉCNICA (OBLIGATORIA):
 Procesa estos documentos como Ingeniero de Proyecto y Estimador Senior en Puerto Rico:
 - NO te limites a repetir o copiar texto. Tu valor es interpretar la constructibilidad, las interferencias de montaje en plenum (MEP vs Estructura vs Arquitectura), la prevalencia de adendas (Addendum No. 3 vs planos preliminares) y el impacto económico (CSI MasterFormat, partidas ocultas y suministro OFCI vs CFCI).
 - Concluye con el plan de acción de obra y el borrador formal de RFI para Procore.
+- Redacción ejecutiva, limpia y directa: PROHIBIDO usar asteriscos triples (***) o símbolos molestos de markdown. Usa títulos limpios y listas bien organizadas.
 - Asocia tus conclusiones con etiquetas inline [[HL-1]], [[HL-2]] y cierra con el bloque \`\`\`json:highlights\`\`\` para controlar el visor PDF.`;
 
     // 4. Ejecutar Generación e Interpretación con Gemini en location=global
@@ -245,6 +246,7 @@ Procesa estos documentos como Ingeniero de Proyecto y Estimador Senior en Puerto
         extractedHighlights = parsed.highlights || [];
         // Remover el bloque JSON de la respuesta visible para que el chat quede limpio
         informeTecnico = fullGeneratedText.replace(jsonMatch[0], '').trim();
+        informeTecnico = informeTecnico.replace(/\*\*\*/g, '**');
       } catch (parseErr) {
         console.warn('Error parsing highlights JSON from model output:', parseErr);
       }
