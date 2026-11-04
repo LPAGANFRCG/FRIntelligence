@@ -36,6 +36,24 @@ export const SourceCitationBadge: React.FC<SourceCitationBadgeProps> = ({
         )}
       >
         <Layers className="h-3 w-3 shrink-0 text-amber-400" />
+        {citation.category_tag && (
+          <span className={cn(
+            "px-1 py-0.2 rounded text-[10px] font-mono font-bold tracking-wider uppercase border",
+            citation.category_tag.includes('RFI')
+              ? "bg-amber-500/20 text-amber-300 border-amber-500/40"
+              : citation.category_tag.includes('03')
+              ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/40"
+              : citation.category_tag.includes('02')
+              ? "bg-blue-500/20 text-blue-300 border-blue-500/40"
+              : citation.category_tag.includes('01')
+              ? "bg-purple-500/20 text-purple-300 border-purple-500/40"
+              : citation.category_tag.includes('SPEC')
+              ? "bg-cyan-500/20 text-cyan-300 border-cyan-500/40"
+              : "bg-amber-500/15 text-amber-300 border-amber-500/30"
+          )}>
+            {citation.category_tag}
+          </span>
+        )}
         <span className="font-semibold">{citation.sheet_number}</span>
         {citation.callout_tag && (
           <span className="opacity-80 text-[10px] hidden sm:inline">
@@ -78,6 +96,9 @@ export const SourceCitationBadge: React.FC<SourceCitationBadgeProps> = ({
           </p>
 
           <div className="mt-2 text-[11px] text-zinc-400 space-y-0.5">
+            {citation.category_tag && (
+              <div><span className="text-zinc-500">Jerarquía:</span> <span className="font-semibold text-amber-300 font-mono">{citation.category_tag} (Prioridad {citation.priority || 5})</span></div>
+            )}
             <div><span className="text-zinc-500">Discipline:</span> {citation.discipline}</div>
             <div><span className="text-zinc-500">Revision:</span> {citation.revision} ({citation.revision_date})</div>
             {citation.spec_section && (

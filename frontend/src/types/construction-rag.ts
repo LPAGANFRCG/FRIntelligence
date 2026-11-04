@@ -74,6 +74,11 @@ export interface CitationSource {
   text_excerpt: string;
   spec_section?: string;
   callout_tag?: string;
+  doc_type?: 'RFI' | 'ADDENDUM' | 'SPECIFICATION' | 'DRAWING' | 'TAKEOFF' | 'GENERAL' | string;
+  category_tag?: string; // "[RFI]", "[ADDENDUM 03]", "[SPEC]", "[DRAWING]"
+  priority?: number; // 1 (RFI), 2 (Add 03), 3 (Add 02), 4 (Add 01), 5 (Spec/Drawing), 6 (Takeoff)
+  folder_path?: string;
+  file_name?: string;
   color?: string;
   style?: {
     color?: string;

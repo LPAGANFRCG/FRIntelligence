@@ -299,9 +299,28 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({
                         <FileText className="w-4 h-4 text-amber-400" />
                       </div>
                       <div className="truncate">
-                        <h4 className="text-xs font-bold text-[#ffffff] truncate">
-                          {fileName}
-                        </h4>
+                        <div className="flex items-center gap-1.5 mb-0.5">
+                          {c.category_tag && (
+                            <span className={`px-1.5 py-0.5 rounded text-[10px] font-mono font-bold tracking-wider uppercase border shrink-0 ${
+                              c.category_tag.includes('RFI')
+                                ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                                : c.category_tag.includes('03')
+                                ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                                : c.category_tag.includes('02')
+                                ? 'bg-blue-500/20 text-blue-300 border-blue-500/40'
+                                : c.category_tag.includes('01')
+                                ? 'bg-purple-500/20 text-purple-300 border-purple-500/40'
+                                : c.category_tag.includes('SPEC')
+                                ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40'
+                                : 'bg-amber-500/15 text-amber-300 border-amber-500/30'
+                            }`}>
+                              {c.category_tag}
+                            </span>
+                          )}
+                          <h4 className="text-xs font-bold text-[#ffffff] truncate">
+                            {fileName}
+                          </h4>
+                        </div>
                         <p className="text-[11px] text-[#8a93a0] truncate font-sans">
                           {subTitle}
                         </p>

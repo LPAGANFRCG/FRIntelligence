@@ -201,8 +201,12 @@ export const MessageItem: React.FC<MessageItemProps> = ({
           ) || message.citations[0];
 
         const isActive = foundCitation && activeCitationId === foundCitation.id;
-        const displayLabel =
+        const categoryBadge = foundCitation?.category_tag;
+        let displayLabel =
           customLabel || (foundCitation ? `${highlightId} • ${foundCitation.sheet_number}` : highlightId);
+        if (categoryBadge && !displayLabel.startsWith('[')) {
+          displayLabel = `${categoryBadge} ${displayLabel}`;
+        }
 
         elements.push(
           <button
@@ -239,6 +243,11 @@ export const MessageItem: React.FC<MessageItemProps> = ({
           ) || message.citations[0];
 
         const isActive = foundCitation && activeCitationId === foundCitation.id;
+        const categoryBadge = foundCitation?.category_tag;
+        let displayLabel = labelText;
+        if (categoryBadge && !displayLabel.startsWith('[')) {
+          displayLabel = `${categoryBadge} ${displayLabel}`;
+        }
 
         elements.push(
           <button
